@@ -4,13 +4,12 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class SignupMailSender {
     private final JavaMailSender mailSender;
-
-    public SignupMailSender(JavaMailSender mailSender) {
-        this.mailSender = mailSender;
-    }
 
     public void sendOtp(String toEmail, String code) {
         SimpleMailMessage msg = new SimpleMailMessage();

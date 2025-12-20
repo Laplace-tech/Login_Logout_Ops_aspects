@@ -6,13 +6,17 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record ApiError(
         String code,
         String message,
-        Integer retryAfterSeconds
-) {
+        Integer retryAfterSeconds,
+        Object details) {
     public static ApiError of(String code, String message) {
-        return new ApiError(code, message, null);
+        return new ApiError(code, message, null, null);
     }
 
     public static ApiError of(String code, String message, Integer retryAfterSeconds) {
-        return new ApiError(code, message, retryAfterSeconds);
+        return new ApiError(code, message, retryAfterSeconds, null);
+    }
+
+    public static ApiError of(String code, String message, Integer retryAfterSeconds, Object details) {
+        return new ApiError(code, message, retryAfterSeconds, details);
     }
 }

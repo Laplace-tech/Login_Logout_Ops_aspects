@@ -21,6 +21,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handle(MethodArgumentNotValidException e) {
+        // 개발 편의: 어떤 필드가 왜 실패했는지 로그로만 남김
+        e.getBindingResult().getFieldErrors()
+                .forEach(fe -> org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class)
+                        .debug("Validation error: field={}, message={}", fe.getField(), fe.getDefaultMessage()));
+
         return ResponseEntity
                 .status(BAD_REQUEST)
                 .body(ApiError.of("VALIDATION_ERROR", "요청 값이 올바르지 않습니다."));

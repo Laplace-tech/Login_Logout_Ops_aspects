@@ -3,7 +3,6 @@ package com.kyonggi.backend.security;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 
@@ -14,14 +13,13 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
-                .httpBasic(Customizer.withDefaults())
-                .formLogin(form -> form.disable())
+                .httpBasic(b -> b.disable()) // ✅ 이걸 추천
+                .formLogin(f -> f.disable())
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/error").permitAll()
                         .requestMatchers("/auth/**").permitAll()
-                        // 나중에 게시판 생기면 GET은 게스트 허용 정책을 여기 반영
                         .requestMatchers(HttpMethod.GET, "/posts/**", "/categories/**").permitAll()
-                        .anyRequest().authenticated()
-                )
+                        .anyRequest().authenticated())
                 .build();
     }
 }

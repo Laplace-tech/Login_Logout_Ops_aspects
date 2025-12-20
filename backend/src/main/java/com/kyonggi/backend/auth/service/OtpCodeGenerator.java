@@ -1,13 +1,19 @@
 package com.kyonggi.backend.auth.service;
 
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
 import java.security.SecureRandom;
 
+@Component
+@RequiredArgsConstructor
 public class OtpCodeGenerator {
-    private static final SecureRandom RND = new SecureRandom();
 
-    // 6자리 숫자
-    public static String generate6Digits() {
-        int n = RND.nextInt(1_000_000); // 0..999999
-        return String.format("%06d", n);
+    private final SecureRandom secureRandom;
+
+    // 6자리 숫자 (100000~999999)
+    public String generate6Digits() {
+        int n = secureRandom.nextInt(900_000) + 100_000;
+        return Integer.toString(n);
     }
 }

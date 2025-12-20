@@ -5,14 +5,14 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "users",
-        uniqueConstraints = {
-                @UniqueConstraint(name = "uq_users_email", columnNames = "email"),
-                @UniqueConstraint(name = "uq_users_nickname", columnNames = "nickname")
-        })
+@Table(name = "users", uniqueConstraints = {
+        @UniqueConstraint(name = "uq_users_email", columnNames = "email"),
+        @UniqueConstraint(name = "uq_users_nickname", columnNames = "nickname")
+})
 public class User {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(nullable = false, length = 255)
@@ -35,7 +35,8 @@ public class User {
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;
 
-    protected User() {}
+    protected User() {
+    }
 
     public static User create(String email, String passwordHash, String nickname) {
         User u = new User();
@@ -48,7 +49,15 @@ public class User {
         return u;
     }
 
-    public Long getId() { return id; }
-    public String getEmail() { return email; }
-    public String getNickname() { return nickname; }
+    public Long getId() {
+        return id;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public String getNickname() {
+        return nickname;
+    }
 }

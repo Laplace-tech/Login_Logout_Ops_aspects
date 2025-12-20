@@ -6,11 +6,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "email_otp",
-        uniqueConstraints = @UniqueConstraint(name = "uq_email_otp_email_purpose", columnNames = {"email", "purpose"}))
+@Table(name = "email_otp", uniqueConstraints = @UniqueConstraint(name = "uq_email_otp_email_purpose", columnNames = {
+        "email", "purpose" }))
 public class EmailOtp {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(nullable = false, length = 255)
@@ -26,9 +27,11 @@ public class EmailOtp {
     @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
 
+    // null
     @Column(name = "verified_at")
     private LocalDateTime verifiedAt;
 
+    // 0
     @Column(name = "failed_attempts", nullable = false)
     private int failedAttempts;
 
@@ -44,27 +47,28 @@ public class EmailOtp {
     @Column(name = "send_count", nullable = false)
     private int sendCount;
 
-    protected EmailOtp() {}
+    protected EmailOtp() {
+    }
 
     public static EmailOtp create(String email, String codeHash, OtpPurpose purpose,
-                                  LocalDateTime expiresAt, LocalDateTime now, LocalDate today,
-                                  LocalDateTime resendAvailableAt) {
+            LocalDateTime expiresAt, LocalDateTime now, LocalDate today,
+            LocalDateTime resendAvailableAt) {
         EmailOtp o = new EmailOtp();
-        o.email = email;
-        o.codeHash = codeHash;
-        o.purpose = purpose;
-        o.expiresAt = expiresAt;
+        o.email = email; // 클라이언트가 보낸 rawEmail
+        o.codeHash = codeHash; // 6자리 인증 숫자
+        o.purpose = purpose; // SIGNUP
+        o.expiresAt = expiresAt; // now.plusMinutes
         o.verifiedAt = null;
         o.failedAttempts = 0;
-        o.lastSentAt = now;
-        o.resendAvailableAt = resendAvailableAt;
+        o.lastSentAt = now; // now
+        o.resendAvailableAt = resendAvailableAt; // 쿨다운
         o.sendCountDate = today;
         o.sendCount = 1;
         return o;
     }
 
     public void reissue(String newCodeHash, LocalDateTime newExpiresAt, LocalDateTime now,
-                        LocalDate today, LocalDateTime resendAvailableAt) {
+            LocalDate today, LocalDateTime resendAvailableAt) {
         this.codeHash = newCodeHash;
         this.expiresAt = newExpiresAt;
         this.verifiedAt = null;
@@ -97,13 +101,39 @@ public class EmailOtp {
     }
 
     // getters
-    public String getEmail() { return email; }
-    public String getCodeHash() { return codeHash; }
-    public OtpPurpose getPurpose() { return purpose; }
-    public LocalDateTime getExpiresAt() { return expiresAt; }
-    public LocalDateTime getVerifiedAt() { return verifiedAt; }
-    public int getFailedAttempts() { return failedAttempts; }
-    public LocalDateTime getResendAvailableAt() { return resendAvailableAt; }
-    public LocalDate getSendCountDate() { return sendCountDate; }
-    public int getSendCount() { return sendCount; }
+    public String getEmail() {
+        return email;
+    }
+
+    public String getCodeHash() {
+        return codeHash;
+    }
+
+    public OtpPurpose getPurpose() {
+        return purpose;
+    }
+
+    public LocalDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public LocalDateTime getVerifiedAt() {
+        return verifiedAt;
+    }
+
+    public int getFailedAttempts() {
+        return failedAttempts;
+    }
+
+    public LocalDateTime getResendAvailableAt() {
+        return resendAvailableAt;
+    }
+
+    public LocalDate getSendCountDate() {
+        return sendCountDate;
+    }
+
+    public int getSendCount() {
+        return sendCount;
+    }
 }
