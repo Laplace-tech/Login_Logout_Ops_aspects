@@ -30,7 +30,8 @@ server:
 
 app:
   otp:
-    ttl-minutes: 5
+    ttl-minutes: 10
     max-failures: 5
     resend-cooldown-seconds: 60
     daily-send-limit: 10
+    hmac-secret: "${APP_OTP_HMAC_SECRET:local-dev-otp-secret-change-me}"

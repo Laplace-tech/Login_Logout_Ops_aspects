@@ -1,9 +1,10 @@
-package com.kyonggi.backend.auth.service;
-
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+package com.kyonggi.backend.auth.signup.support;
 
 import java.security.SecureRandom;
+
+import org.springframework.stereotype.Component;
+
+import lombok.RequiredArgsConstructor;
 
 @Component
 @RequiredArgsConstructor

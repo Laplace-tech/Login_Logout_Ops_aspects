@@ -1,22 +1,24 @@
-package com.kyonggi.backend.auth.service;
+package com.kyonggi.backend.auth.signup.service;
+
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.regex.Pattern;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.kyonggi.backend.auth.domain.EmailOtp;
 import com.kyonggi.backend.auth.domain.OtpPurpose;
 import com.kyonggi.backend.auth.domain.User;
 import com.kyonggi.backend.auth.repo.EmailOtpRepository;
 import com.kyonggi.backend.auth.repo.UserRepository;
-import com.kyonggi.backend.auth.support.KyonggiEmailUtils;
-import com.kyonggi.backend.auth.support.SignupPatterns;
+import com.kyonggi.backend.auth.signup.support.KyonggiEmailUtils;
+import com.kyonggi.backend.auth.signup.support.SignupPatterns;
 import com.kyonggi.backend.common.ApiException;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
-import java.time.LocalDateTime;
-import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -28,7 +30,6 @@ public class SignupService {
     private final Clock clock;
     private final PasswordEncoder passwordEncoder;
 
-    // ✅ 정규식은 "문자열 상수"로 관리하고, Pattern은 static final로 한 번만 컴파일
     private static final Pattern PASSWORD_PATTERN = Pattern.compile(SignupPatterns.PASSWORD_REGEX);
     private static final Pattern NICKNAME_PATTERN = Pattern.compile(SignupPatterns.NICKNAME_REGEX);
 
@@ -39,27 +40,26 @@ public class SignupService {
 
         LocalDateTime now = LocalDateTime.now(clock);
 
-        // password confirm
         if (rawPassword == null || rawPasswordConfirm == null || !rawPassword.equals(rawPasswordConfirm)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "PASSWORD_MISMATCH", "비밀번호가 일치하지 않습니다.");
         }
 
-        // password policy
         if (!PASSWORD_PATTERN.matcher(rawPassword).matches()) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     "WEAK_PASSWORD",
-                    "비밀번호는 9~15자, 영문+숫자+특수문자를 포함하고 공백이 없어야 합니다.");
+                    "비밀번호는 9~15자, 영문+숫자+특수문자를 포함하고 공백이 없어야 합니다."
+            );
         }
 
         String nick = nickname == null ? "" : nickname.trim();
 
-        // nickname policy
         if (!NICKNAME_PATTERN.matcher(nick).matches()) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     "INVALID_NICKNAME",
-                    "닉네임은 2~20자, 한글/영문/숫자/_(언더스코어)만 허용하며 공백은 불가합니다.");
+                    "닉네임은 2~20자, 한글/영문/숫자/_(언더스코어)만 허용하며 공백은 불가합니다."
+            );
         }
 
         EmailOtp otp = emailOtpRepository.findByEmailAndPurpose(email, OtpPurpose.SIGNUP)

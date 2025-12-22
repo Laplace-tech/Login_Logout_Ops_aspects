@@ -38,16 +38,24 @@ services:
     container_name: kyonggi-backend
     ports:
       - "8080:8080"
+
+    restart: on-failure
+    
     environment:
       SPRING_PROFILES_ACTIVE: local
-
-      # 컨테이너 안에서는 localhost가 아니라 서비스명!
+      
+      # 데이터베이스
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/kyonggi_board?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8
       SPRING_DATASOURCE_USERNAME: kyonggi
       SPRING_DATASOURCE_PASSWORD: kyonggi
 
+      SPRING_FLYWAY_CONNECT_RETRIES: 30             
+      SPRING_FLYWAY_CONNECT_RETRIES_INTERVAL: 2   
+
+      # 메일호그
       SPRING_MAIL_HOST: mailhog
       SPRING_MAIL_PORT: 1025
+    
     depends_on:
       mysql:
         condition: service_healthy

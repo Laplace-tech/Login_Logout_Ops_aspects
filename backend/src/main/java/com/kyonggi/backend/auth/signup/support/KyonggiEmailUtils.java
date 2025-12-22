@@ -1,7 +1,9 @@
-package com.kyonggi.backend.auth.support;
+package com.kyonggi.backend.auth.signup.support;
+
+import org.springframework.http.HttpStatus;
 
 import com.kyonggi.backend.common.ApiException;
-import org.springframework.http.HttpStatus;
+
 
 public class KyonggiEmailUtils {
 
@@ -11,8 +13,10 @@ public class KyonggiEmailUtils {
 
     public static void validateDomain(String normalizedEmail) {
         if (normalizedEmail == null || !normalizedEmail.endsWith("@kyonggi.ac.kr")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "EMAIL_DOMAIN_NOT_ALLOWED",
-                    "@kyonggi.ac.kr 이메일만 가입할 수 있습니다.");
+            throw new ApiException(
+                HttpStatus.BAD_REQUEST, 
+                "EMAIL_DOMAIN_NOT_ALLOWED",
+                "@kyonggi.ac.kr 이메일만 가입할 수 있습니다.");
         }
     }
 }
