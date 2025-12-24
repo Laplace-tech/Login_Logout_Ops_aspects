@@ -46,13 +46,13 @@ CREATE TABLE refresh_tokens (
   -- refresh token 원문은 저장 금지: SHA-256(hex) 같은 해시만 저장
   token_hash CHAR(64) NOT NULL,
 
-  remember_me TINYINT(1) NOT NULL,
+  remember_me TINYINT(1) NOT NULL DEFAULT 0,
 
   expires_at DATETIME(6) NOT NULL,
   last_used_at DATETIME(6) NULL,
   revoked_at DATETIME(6) NULL,
   revoke_reason VARCHAR(50) NULL,
-
+  
   user_agent VARCHAR(255) NULL,
   ip_address VARCHAR(45) NULL,
 

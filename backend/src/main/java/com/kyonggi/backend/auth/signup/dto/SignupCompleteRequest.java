@@ -4,6 +4,16 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+/**
+ * [signup.dto 패키지의 역할]
+ * 
+ * DTO(Data Transfer Object) 개념
+ * 
+ * - Client ↔ Controller 간 "요청 데이터 전용 객체"
+ * - 비즈니스 로직 없음
+ * - 검증(@Valid, @NotBlank 등)만 담당
+ */
+
 public record SignupCompleteRequest(
         @NotBlank(message = "이메일은 필수입니다.")
         @Email(message = "이메일 형식이 올바르지 않습니다.")

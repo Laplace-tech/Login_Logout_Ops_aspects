@@ -29,6 +29,19 @@ server:
   port: 8080
 
 app:
+  auth:
+    jwt:
+      issuer: "kyonggi-board"
+      access-ttl-seconds: 900
+      secret: "${APP_AUTH_JWT_SECRET:local-dev-jwt-secret-change-me-32-bytes-min}"
+    refresh:
+      cookie-name: "KG_REFRESH"
+      cookie-path: "/auth"
+      cookie-same-site: "Lax"
+      cookie-secure: false   # 로컬은 false, 운영은 true로 바꾸거나 profile로 분리
+      remember-me-seconds: 604800  # 7d
+      session-ttl-seconds: 86400   # rememberMe=false일 때 서버 만료(권장 1d)
+      
   otp:
     ttl-minutes: 10
     max-failures: 5

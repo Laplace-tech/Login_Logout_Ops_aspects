@@ -30,7 +30,7 @@ curl -i -X POST "http://localhost:8080/auth/signup/otp/request" \
 [OTP 검증]
 curl -i -X POST "http://localhost:8080/auth/signup/otp/verify" \
   -H "Content-Type: application/json" \
-  -d '{"email":"add28482848@kyonggi.ac.kr","code":"644943"}'
+  -d '{"email":"add28482848@kyonggi.ac.kr","code":"172904"}'
 
 [가입 완료]
 curl -i -X POST "http://localhost:8080/auth/signup/complete" \
@@ -63,3 +63,4 @@ public class BackendApplication {
 	}
 
 }
+

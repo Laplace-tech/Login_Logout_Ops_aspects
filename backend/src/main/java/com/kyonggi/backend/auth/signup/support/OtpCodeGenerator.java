@@ -12,9 +12,8 @@ public class OtpCodeGenerator {
 
     private final SecureRandom secureRandom;
 
-    // 6자리 숫자 (100000~999999)
     public String generate6Digits() {
-        int n = secureRandom.nextInt(900_000) + 100_000;
-        return Integer.toString(n);
+        int n = secureRandom.nextInt(999_999) + 1; // 1~999999
+        return String.format("%06d", n);          // 000001~999999
     }
 }

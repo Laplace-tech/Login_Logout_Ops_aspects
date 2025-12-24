@@ -10,10 +10,21 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+/**
+ * @Configuration 
+ * - 이 클래스가 "스프링 설정 클래스"임을 의미
+ * - @Bean 메서드에서 반환하는 객체들이 스프링 컨테이너(ApplicationContext)에 등록됨
+ * 
+ * @EnableConfigurationProperties
+ *  - @ConfigurationProperties가 붙은 클래스들을 스프링이 자동으로 바인딩 + 검증하도록 활성화
+ *  - 여기서는: {OtpProperties, AuthProperties}
+ */
+
 @Configuration
-@EnableConfigurationProperties(OtpProperties.class)
+@EnableConfigurationProperties({OtpProperties.class, AuthProperties.class})
 public class AuthModuleConfig {
 
+    // 서버 전체에서 사용할 표준 타임존(KST)
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Bean
