@@ -13,6 +13,7 @@ import com.kyonggi.backend.auth.config.OtpProperties;
 import com.kyonggi.backend.auth.domain.EmailOtp;
 import com.kyonggi.backend.auth.domain.OtpPurpose;
 import com.kyonggi.backend.auth.repo.EmailOtpRepository;
+import com.kyonggi.backend.auth.signup.exception.OtpInvalidException;
 import com.kyonggi.backend.auth.signup.support.KyonggiEmailUtils;
 import com.kyonggi.backend.auth.signup.support.OtpCodeGenerator;
 import com.kyonggi.backend.auth.signup.support.OtpHasher;
@@ -20,16 +21,20 @@ import com.kyonggi.backend.common.ApiException;
 
 import lombok.RequiredArgsConstructor;
 
-
 /**
- * 회원가입 OTP 비즈니스 서비스
- * 
- * - 여러 도메인/컴포넌트를 조합해 하나의 유스케이스를 완성
- * - 상태는 엔티티(EmailOtp)에 있고 흐름제어는 @Service가 담당
+ * 회원가입 OTP 유스케이스
+ *
+ * 설계 포인트
+ * - (email, purpose) 당 OTP 1개(유니크)만 유지
+ * - 재요청: 쿨다운 / 일일 제한 / 이미 검증된 상태면 막기
+ * - 검증 실패 시 failedAttempts 증가를 DB에 "반드시" 남겨야 하므로
+ * OtpInvalidException만 noRollbackFor로 커밋되게 처리
  */
 @Service
 @RequiredArgsConstructor
 public class SignupOtpService {
+
+    private static final OtpPurpose PURPOSE = OtpPurpose.SIGNUP;
 
     private final EmailOtpRepository emailOtpRepository;
     private final SignupMailSender mailSender;
@@ -39,95 +44,81 @@ public class SignupOtpService {
     private final OtpProperties props;
     private final Clock clock;
 
-    // OTP 발급 요청
-    @Transactional // : OTP 상태 변경 + 저장 + 메일 발송 흐름을 하나의 논리적 단위로 묶음 
+    
+    @Transactional
     public void requestSignupOtp(String rawEmail) {
-
-        // 입력 정규화 + (@kyonggi.ac.kr)도메인 정책 검증
         String email = KyonggiEmailUtils.normalizeEmail(rawEmail);
         KyonggiEmailUtils.validateDomain(email);
 
         LocalDateTime now = LocalDateTime.now(clock);
         LocalDate today = now.toLocalDate();
 
-        // (email, purpose) 기준으로 항상 하나의 OTP
-        EmailOtp otp = emailOtpRepository.findByEmailAndPurpose(email, OtpPurpose.SIGNUP).orElse(null);
+        EmailOtp otp = emailOtpRepository.findByEmailAndPurpose(email, PURPOSE).orElse(null);
 
         if (otp != null) {
-            // 1) 이미 검증 + 미만료면 재요청 금지 (complete로 유도)
+            // 1) 이미 검증 + 미만료면 “재요청” 막고 complete 유도
             if (otp.isVerified() && !otp.isExpired(now)) {
                 throw new ApiException(
-                        HttpStatus.CONFLICT, // 409 CONFLICT
+                        HttpStatus.CONFLICT,
                         "OTP_ALREADY_VERIFIED",
-                        "이미 인증이 완료되었습니다. 회원가입을 완료해주세요."
-                );
+                        "이미 인증이 완료되었습니다. 회원가입을 완료해주세요.");
             }
 
-            // 2) 쿨다운 (짧은 시간 반복 요청 방지)
-            if (otp.getResendAvailableAt() != null && otp.getResendAvailableAt().isAfter(now)) {
+            // 2) 쿨다운
+            if (otp.getResendAvailableAt().isAfter(now)) {
                 long retry = Duration.between(now, otp.getResendAvailableAt()).getSeconds();
                 throw new ApiException(
-                        HttpStatus.TOO_MANY_REQUESTS, // 429 TOO_MANU_REQUESTS
+                        HttpStatus.TOO_MANY_REQUESTS,
                         "OTP_COOLDOWN",
                         "잠시 후 다시 시도해주세요.",
-                        (int) Math.max(retry, 1)
-                );
+                        (int) Math.max(retry, 1));
             }
 
-            int currentCount = (otp.getSendCountDate() != null && otp.getSendCountDate().equals(today))
-                    ? otp.getSendCount()
-                    : 0;
-            // 3) 일일 발송 제한 - 이메일 폭탄 방지, 운영 안정성
+            // 3) 일일 제한
+            int currentCount = otp.getSendCountDate().equals(today) ? otp.getSendCount() : 0;
             if (currentCount >= props.dailySendLimit()) {
                 throw new ApiException(
                         HttpStatus.TOO_MANY_REQUESTS,
                         "OTP_DAILY_LIMIT",
-                        "일일 OTP 발송 한도를 초과했습니다. 내일 다시 시도해주세요."
-                );
+                        "일일 OTP 발송 한도를 초과했습니다. 내일 다시 시도해주세요.");
             }
         }
 
-        // OTP 생성 & 저장
+        // 새 OTP 생성(원문은 메일로만 보내고, DB엔 해시만 저장)
         String code = otpCodeGenerator.generate6Digits();
         String codeHash = otpHasher.hash(code);
 
         LocalDateTime expiresAt = now.plusMinutes(props.ttlMinutes());
         LocalDateTime resendAvailableAt = now.plusSeconds(props.resendCooldownSeconds());
 
-        // 생성 및 재발급 (create or reisuee)
-        if (otp == null) {
-            otp = EmailOtp.create( 
-                    email,
-                    codeHash,
-                    OtpPurpose.SIGNUP,
-                    expiresAt,
-                    now,
-                    today,
-                    resendAvailableAt
-            );
-        } else {
-            otp.reissue(codeHash, expiresAt, now, today, resendAvailableAt);
-        }
+        EmailOtp toSave = (otp == null)
+                ? EmailOtp.create(email, codeHash, PURPOSE, expiresAt, now, today, resendAvailableAt)
+                : reissueAndReturn(otp, codeHash, expiresAt, now, today, resendAvailableAt);
 
-        emailOtpRepository.save(otp);
+        emailOtpRepository.save(toSave);
+
+        /**
+         * ⚠️ 실무에서는 메일 발송 같은 "외부 사이드 이펙트"를
+         * 트랜잭션 커밋 이후로 미루기(TransactionalEventListener AFTER_COMMIT 등)를 많이 함.
+         * 지금은 단순하게 유지.
+         */
         mailSender.sendOtp(email, code);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = OtpInvalidException.class)
     public void verifySignupOtp(String rawEmail, String code) {
         String email = KyonggiEmailUtils.normalizeEmail(rawEmail);
         KyonggiEmailUtils.validateDomain(email);
 
         LocalDateTime now = LocalDateTime.now(clock);
 
-        EmailOtp otp = emailOtpRepository.findByEmailAndPurpose(email, OtpPurpose.SIGNUP)
+        EmailOtp otp = emailOtpRepository.findByEmailAndPurpose(email, PURPOSE)
                 .orElseThrow(() -> new ApiException(
                         HttpStatus.BAD_REQUEST,
                         "OTP_NOT_FOUND",
-                        "OTP 요청 이력이 없습니다. 먼저 인증번호를 요청해주세요."
-                ));
+                        "OTP 요청 이력이 없습니다. 먼저 인증번호를 요청해주세요."));
 
-        // ✅ 이미 검증된 경우 idempotent
+        // 이미 인증된 상태면 멱등 처리(idempotent)로 그냥 성공 처리
         if (otp.isVerified()) {
             return;
         }
@@ -136,29 +127,39 @@ public class SignupOtpService {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     "OTP_EXPIRED",
-                    "인증번호가 만료되었습니다. 다시 요청해주세요."
-            );
+                    "인증번호가 만료되었습니다. 다시 요청해주세요.");
         }
 
         if (otp.getFailedAttempts() >= props.maxFailures()) {
             throw new ApiException(
                     HttpStatus.TOO_MANY_REQUESTS,
                     "OTP_TOO_MANY_FAILURES",
-                    "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해주세요."
-            );
+                    "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해주세요.");
         }
 
+        // 불일치: 실패 횟수 증가 후 예외
         if (!otpHasher.matches(code, otp.getCodeHash())) {
             otp.increaseFailure();
             emailOtpRepository.save(otp);
-            throw new ApiException(
-                    HttpStatus.BAD_REQUEST,
-                    "OTP_INVALID",
-                    "인증번호가 올바르지 않습니다."
-            );
+
+            // ✅ 이 예외는 noRollbackFor라서 failedAttempts 증가가 커밋됨
+            throw new OtpInvalidException();
         }
 
+        // 일치: verified_at 마킹 후 저장
         otp.markVerified(now);
         emailOtpRepository.save(otp);
+
+    }
+
+    private EmailOtp reissueAndReturn(
+            EmailOtp otp,
+            String codeHash,
+            LocalDateTime expiresAt,
+            LocalDateTime now,
+            LocalDate today,
+            LocalDateTime resendAvailableAt) {
+        otp.reissue(codeHash, expiresAt, now, today, resendAvailableAt);
+        return otp;
     }
 }

@@ -40,6 +40,7 @@ curl -i -X POST "http://localhost:8080/auth/signup/complete" \
 [DB 확인]
 dmysql -e "select * from users;"
 dmysql -e "select * from email_otp;"
+dmysql -e "select * from refresh_tokens;"
 dmysql -e "show databases;"
 dmysql -e "show tables"
 

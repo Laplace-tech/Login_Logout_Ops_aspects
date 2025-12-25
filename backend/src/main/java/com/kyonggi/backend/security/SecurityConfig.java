@@ -36,11 +36,7 @@ public class SecurityConfig {
                 // 요청별 접근 권한 설정
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/error").permitAll() // 스프링 내부 에러 페이지 접근 허용
-                        .requestMatchers("/auth/signup/**").permitAll() // 회원가입 관련 API 전부 공개
-                        .requestMatchers("/auth/login").permitAll() // 로그인 API 공개
-                        // 내일 구현할 예정: 토큰 재발급, 로그아웃
-                        // .requestMatchers("/auth/refresh", "/auth/logout").permitAll()
-
+                        .requestMatchers("/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/posts/**", "/categories/**").permitAll() // 조회 전용 API는 비로그인 허용
                         .anyRequest().authenticated() // 그 외 모든 요청은 인증 필요
                 )

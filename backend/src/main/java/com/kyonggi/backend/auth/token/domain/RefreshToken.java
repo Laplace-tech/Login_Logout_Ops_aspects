@@ -46,63 +46,58 @@ public class RefreshToken {
     @Column(name = "token_hash", nullable = false, length = 64, unique = true)
     private String tokenHash; // sha256 hex(64자). raw는 저장 금지!
 
-    @Column(name = "expires_at", nullable = false)
-    private LocalDateTime expiresAt; // 서버가 관리하는 "세션 만료 시각"
-
     @Column(name = "remember_me", nullable = false)
     private boolean rememberMe; // rememberMe=true면 ttl 길게
 
+    @Column(name = "expires_at", nullable = false)
+    private LocalDateTime expiresAt; // 서버가 관리하는 "세션 만료 시각"
+
     // ========= 아래는 "운영/보안"을 위한 필드들 =============
     
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
-
-    @Column(name = "revoke_reason")
-    private String revokeReason; 
-
-    @Column(name = "user_agent")
-    private String userAgent;
-
-    @Column(name = "ip_address")
-    private String ipAddress;
+    @Column(name = "last_used_at")
+    private LocalDateTime lastUsedAt;
 
     @Column(name = "revoked_at")
     private LocalDateTime revokedAt;
 
-    @Column(name = "last_used_at")
-    private LocalDateTime lastUsedAt;
+    @Column(name = "revoke_reason", length = 50)
+    private String revokeReason;
+
+    @Column(name = "user_agent", length = 255)
+    private String userAgent;
+
+    @Column(name = "ip_address", length = 45)
+    private String ipAddress;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
 
 
     /**
-     * 발급 팩토리 메서드 (리프레쉬 토큰 발급 서비스에서 호출됨)
-     *  
+     * 발급 팩토리 메서드 (RefreshTokenService 에서 호출됨)
      * RefreshTokenService.issue()
      * - raw 생성
      * - hash 저장
      * - DB row 생성 
      */
-    public static RefreshToken issue(
-            Long userId, 
-            String tokenHash, 
-            LocalDateTime expiresAt,
-            boolean rememberMe,
-            LocalDateTime now, 
-            String userAgent, 
-            String ipAddress
-    ) {
+    public static RefreshToken issue(Long userId, String tokenHash, boolean rememberMe,
+                                    LocalDateTime now, LocalDateTime expiresAt) {
         RefreshToken rt = new RefreshToken();
         rt.userId = userId;
         rt.tokenHash = tokenHash;
-        rt.expiresAt = expiresAt;
         rt.rememberMe = rememberMe;
+        rt.expiresAt = expiresAt;
         rt.createdAt = now;
-        rt.userAgent = userAgent;
-        rt.ipAddress = ipAddress;
         return rt;
     }
 
-    public boolean isExpired(LocalDateTime now) {return expiresAt.isBefore(now) || expiresAt.isEqual(now);}
+    public boolean isExpired(LocalDateTime now) {return !expiresAt.isAfter(now);}
     public boolean isRevoked() {return revokedAt != null;}
-    public void revoke(LocalDateTime now) {this.revokedAt = now;}
-    public void touch(LocalDateTime now) {this.lastUsedAt = now;}
+    public void revoke(LocalDateTime now, String reason) {
+        this.revokedAt = now;
+        this.revokeReason = reason;
+    }
+    public void touch(LocalDateTime now) {
+        this.lastUsedAt = now;
+    }
 }

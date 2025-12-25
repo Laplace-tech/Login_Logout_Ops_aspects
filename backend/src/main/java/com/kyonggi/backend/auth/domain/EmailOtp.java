@@ -26,9 +26,8 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Table(name = "email_otp", 
-       uniqueConstraints = @UniqueConstraint(
-            name = "uq_email_otp_email_purpose", 
-            columnNames = {"email", "purpose" }))
+       uniqueConstraints = @UniqueConstraint(name = "uq_email_otp_email_purpose", 
+                                            columnNames = {"email", "purpose" }))
 @NoArgsConstructor(access=AccessLevel.PROTECTED)
 public class EmailOtp {
 

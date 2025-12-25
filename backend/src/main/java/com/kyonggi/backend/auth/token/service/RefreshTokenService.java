@@ -3,14 +3,19 @@ package com.kyonggi.backend.auth.token.service;
 import java.time.Clock;
 import java.time.LocalDateTime;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.kyonggi.backend.auth.config.AuthProperties;
+import com.kyonggi.backend.auth.domain.User;
+import com.kyonggi.backend.auth.repo.UserRepository;
+import com.kyonggi.backend.auth.security.JwtService;
 import com.kyonggi.backend.auth.token.domain.RefreshToken;
 import com.kyonggi.backend.auth.token.repo.RefreshTokenRepository;
 import com.kyonggi.backend.auth.token.support.TokenGenerator;
 import com.kyonggi.backend.auth.token.support.TokenHashUtils;
+import com.kyonggi.backend.common.ApiException;
 
 import lombok.RequiredArgsConstructor;
 
@@ -43,11 +48,14 @@ import lombok.RequiredArgsConstructor;
 public class RefreshTokenService {
 
     private final RefreshTokenRepository repo;   // refresh_tokens 테이블 저장/조회
-    
+    private final UserRepository userRepository;
+    private final JwtService jwtService;
+
     private final TokenGenerator tokenGenerator; // 랜덤 refresh raw 생성(SecureRandom)
     private final TokenHashUtils hashUtils;      // raw -> sha256Hex(hash) 변환
-    private final AuthProperties props;          // TTL 설정 값(remember/session)
-    private final Clock clock;                   // 현재 시간
+
+    private final AuthProperties props;       
+    private final Clock clock;                 
 
     /**
      * Refresh Token 발급: 토큰 발급 + DB 저장이 한 단위의 유스케이스로 같이 성공/실패 해야 함
@@ -57,23 +65,88 @@ public class RefreshTokenService {
         LocalDateTime now = LocalDateTime.now(clock); // now 구하기
 
         // rememberMe 여부에 따라 TTL 결정 (초 단위)
-        long ttl = rememberMe 
-                ? props.refresh().rememberMeSeconds() 
-                : props.refresh().sessionTtlSeconds();
+        long ttlSeconds = rememberMe 
+            ? props.refresh().rememberMeSeconds() 
+            : props.refresh().sessionTtlSeconds();
 
-        LocalDateTime expiresAt = now.plusSeconds(ttl); // 만료 시각 계산 = now + TTL
+        LocalDateTime expiresAt = now.plusSeconds(ttlSeconds); // 만료 시각 계산 = now + TTL
 
         /**
          * raw refresh 토큰 생성 -> sha256 으로 해싱 -> 디비 저장
          * (검증 시, incoming raw -> sha256 해싱 -> 디비 값과 비교)
          */
-        String raw = tokenGenerator.generateRefreshToken(); // refresh 토큰 생성
-        String hash = hashUtils.sha256Hex(raw);
-        repo.save(RefreshToken.issue(userId, hash, expiresAt, rememberMe, now, null, null)); 
+        String rawRefresh = tokenGenerator.generateRefreshToken(); // refresh 토큰 생성
+        String hash = hashUtils.sha256Hex(rawRefresh);
+        
+        repo.save(RefreshToken.issue(userId, hash, rememberMe, now, expiresAt));
+        return new Issued(rawRefresh, expiresAt, rememberMe); // 컨트롤러가 쿠키로 내려주기 위해 raw를 반환
+    }
 
-        // 컨트롤러가 쿠키로 내려주기 위해 raw를 반환
-        return new Issued(raw, expiresAt, rememberMe);
+    /**
+     * refresh rotation (재발급/회전)
+     * - "old refresh"는 즉시 폐기(revoke)
+     * - "new refresh"를 새로 발급하고 저장
+     * - access token 재발급해서 반환
+     */
+    @Transactional
+    public RotateResult rotate(String oldRefreshRaw) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        
+        String oldRefreshHash = hashUtils.sha256Hex(oldRefreshRaw); // 요청으로 들어온 refresh raw를 동일하게 해싱해서 DB 조회
+
+        RefreshToken old = repo.findByTokenHash(oldRefreshHash)
+                .orElseThrow(() -> new ApiException(
+                    HttpStatus.UNAUTHORIZED, // 401 UNAUTHORIZED
+                    "REFRESH_INVALID", 
+                    "리프레시 토큰이 유효하지 않습니다."
+                ));
+    
+        // 만료 검사
+        if (old.isExpired(now)) {
+            throw new ApiException(
+                HttpStatus.UNAUTHORIZED, 
+                "REFRESH_EXPIRED", 
+                "리프레시 토큰이 만료되었습니다.");
+        }
+
+        // 이미 폐기된 토큰이면 "재사용"으로 판단
+        if(old.isRevoked()) {
+            throw new ApiException(
+                HttpStatus.UNAUTHORIZED, 
+                "REFRESH_REUSED", 
+                "리프레시 토큰이 이미 폐기되었습니다."
+            );
+        }
+
+        // old revoke
+        old.touch(now); // last_used_at 업데이트(감사/추적)
+        old.revoke(now, "ROTATED");  // revoked_at + revoke_reason 기록
+        repo.save(old);
+
+
+        // new refresh token issue (rememberMe는 old 값을 그대로 계승)
+        boolean rememberMe = old.isRememberMe();
+        long ttlSeconds = rememberMe 
+            ? props.refresh().rememberMeSeconds()
+            : props.refresh().sessionTtlSeconds();
+
+        LocalDateTime newExpiresAt = now.plusSeconds(ttlSeconds);
+        String newRaw = tokenGenerator.generateRefreshToken();
+        String newHash = hashUtils.sha256Hex(newRaw);
+
+        repo.save(RefreshToken.issue(old.getUserId(), newHash, rememberMe, now, newExpiresAt));
+        
+        User user = userRepository.findById(old.getUserId())
+            .orElseThrow(() -> new ApiException(
+                HttpStatus.UNAUTHORIZED,
+                "USER_NOT_FOUND",
+                "사용자를 찾을 수 없습니다."));
+        
+        // accessToken 새로 발급
+        String accessToken = jwtService.issueAccessToken(user.getId(), user.getRole().name());
+        return new RotateResult(accessToken, newRaw, rememberMe);
     }
 
     public record Issued(String raw, LocalDateTime expiresAt, boolean rememberMe) {}
+    public record RotateResult(String accessToken, String newRefreshRaw, boolean rememberMe) {}
 }
