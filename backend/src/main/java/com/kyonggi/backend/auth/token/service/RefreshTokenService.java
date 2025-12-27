@@ -2,6 +2,7 @@ package com.kyonggi.backend.auth.token.service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -10,32 +11,23 @@ import org.springframework.transaction.annotation.Transactional;
 import com.kyonggi.backend.auth.config.AuthProperties;
 import com.kyonggi.backend.auth.domain.User;
 import com.kyonggi.backend.auth.repo.UserRepository;
-import com.kyonggi.backend.auth.security.JwtService;
 import com.kyonggi.backend.auth.token.domain.RefreshToken;
 import com.kyonggi.backend.auth.token.repo.RefreshTokenRepository;
 import com.kyonggi.backend.auth.token.support.TokenGenerator;
 import com.kyonggi.backend.auth.token.support.TokenHashUtils;
-import com.kyonggi.backend.common.ApiException;
+import com.kyonggi.backend.global.ApiException;
+import com.kyonggi.backend.security.JwtService;
 
 import lombok.RequiredArgsConstructor;
 
 /**
- * ========================
  * Refresh Token 발급 서비스
- * ========================
  * 
- * Refresh Token: 
- * - Access Token의 TTL이 만료됐을 때 "재로그인 없이" Access Token을 다시 받기 위한 토큰
+ * Refresh Token: Access Token의 TTL이 만료됐을 때 "재로그인 없이" Access Token을 다시 받기 위한 토큰
  * - Access Token 보다 TTL이 길다 (rememberMe면 더 길게)
  * 
- * 왜 DB에 저장하나?
- * - Access Token은 stateless(JWT)라 서버가 저장 안 함
- * - Refresh Token은 "세션처럼" 서버가 통제해야 안전함
- * 
- * 왜 원문(raw)을 DB에 저장하지 않나?
- * - DB가 털리면 raw가 그대로 악용됨
- * - 그래서 DB에는 sha256 해시만 저장
- *  (검증 시, incoming raw -> sha256 -> DB hash 비교)
+ * DB에는 sha256 해시만 저장
+ * - 검증 시, incoming raw -> sha256 -> DB hash 비교)
  * - 클라이언트에는 raw를 HttpOnly 쿠키로 내려준다
  * 
  * rememberMe 정책
@@ -92,7 +84,8 @@ public class RefreshTokenService {
     public RotateResult rotate(String oldRefreshRaw) {
         LocalDateTime now = LocalDateTime.now(clock);
         
-        String oldRefreshHash = hashUtils.sha256Hex(oldRefreshRaw); // 요청으로 들어온 refresh raw를 동일하게 해싱해서 DB 조회
+        // incoming rawRefreshRaw를 동일한 방식으로 sha256Hex로 바꿔서 DB에서 조회한다
+        String oldRefreshHash = hashUtils.sha256Hex(oldRefreshRaw);
 
         RefreshToken old = repo.findByTokenHash(oldRefreshHash)
                 .orElseThrow(() -> new ApiException(
@@ -145,6 +138,27 @@ public class RefreshTokenService {
         // accessToken 새로 발급
         String accessToken = jwtService.issueAccessToken(user.getId(), user.getRole().name());
         return new RotateResult(accessToken, newRaw, rememberMe);
+    }
+
+    // 로그아웃용 revoke - 쿠키가 없거나, DB에 없거나, 이미 revoke여도 "그냥 성공" 취급
+    @Transactional
+    public void revokeIfPresent(String refreshRaw, String reason) {
+        if(refreshRaw == null || refreshRaw.isBlank()) 
+            return;
+
+        LocalDateTime now = LocalDateTime.now(clock);
+        String refreshHash = hashUtils.sha256Hex(refreshRaw);
+
+        Optional<RefreshToken> opt = repo.findByTokenHash(refreshHash);
+        if (opt.isEmpty()) 
+            return;
+
+        RefreshToken entity = opt.get();
+        if (entity.isRevoked()) 
+            return;
+
+        entity.revoke(now, reason);
+        repo.save(entity);
     }
 
     public record Issued(String raw, LocalDateTime expiresAt, boolean rememberMe) {}

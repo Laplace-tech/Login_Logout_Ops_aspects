@@ -1,21 +1,18 @@
 package com.kyonggi.backend.auth.token.web;
 
-import java.time.Duration;
-
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseCookie;
-import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.kyonggi.backend.auth.config.AuthProperties;
 import com.kyonggi.backend.auth.token.service.RefreshTokenService;
-import com.kyonggi.backend.common.ApiException;
+import com.kyonggi.backend.auth.token.support.AuthCookieUtils;
+import com.kyonggi.backend.global.ApiException;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+
 
 @RestController
 @RequiredArgsConstructor
@@ -23,35 +20,31 @@ import lombok.RequiredArgsConstructor;
 public class AuthTokenController {
 
     private final RefreshTokenService refreshTokenService;
-    private final AuthProperties props;
+    private final AuthCookieUtils cookieUtils;
 
+    // POST: /auth/refresh
     @PostMapping("/refresh")
-    public RefreshResponse refresh(
-            @CookieValue(name = "KG_REFRESH", required = false) String refreshRaw,
-            HttpServletResponse response
-    ) {
+    public RefreshResponse refresh(HttpServletRequest request, HttpServletResponse response) {
+        String refreshRaw = cookieUtils.readRefreshCookie(request); // HttpOnly 쿠키에서 refresh raw를 읽는다.
+
+        // refresh 토큰이 없거나 비어있으면 즉시 거절
         if (refreshRaw == null || refreshRaw.isBlank()) {
             throw new ApiException(
-                HttpStatus.UNAUTHORIZED, 
-                "REFRESH_MISSING", 
-                "리프레시 토큰이 없습니다.");
+                    HttpStatus.UNAUTHORIZED,
+                    "REFRESH_INVALID",
+                    "리프레시 토큰이 유효하지 않습니다."
+            );
         }
 
-        RefreshTokenService.RotateResult result = refreshTokenService.rotate(refreshRaw);
+        /**
+         * ROTATE 수행:
+         * - old refresh token 폐기
+         * - 새로운 Refresh Token 및 Access Token 발급
+         */
+        var result = refreshTokenService.rotate(refreshRaw);
 
-        // ✅ var로 빌더 받기 (Builder 타입이 아님)
-        var cb = ResponseCookie.from("KG_REFRESH", result.newRefreshRaw())
-                .httpOnly(true)
-                .secure(false)     // 로컬/테스트 통과용 (테스트는 Secure 안 봄)
-                .path("/auth")
-                .sameSite("Lax");
-
-        if (result.rememberMe()) {
-            cb.maxAge(Duration.ofSeconds(props.refresh().rememberMeSeconds()));
-        }
-
-        response.addHeader(HttpHeaders.SET_COOKIE, cb.build().toString());
-        return new RefreshResponse(result.accessToken());
+        cookieUtils.setRefreshCookie(response, result.newRefreshRaw(), result.rememberMe()); // 새 refresh를 쿠키로 내려준다.
+        return new RefreshResponse(result.accessToken()); // accessToken은 body로 내려준다.
     }
 
     public record RefreshResponse(String accessToken) {}

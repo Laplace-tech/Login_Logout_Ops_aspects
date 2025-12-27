@@ -30,7 +30,6 @@ public class TokenGenerator {
      * Refresh Token 생성
      * - 48 Bytes 난수 생성
      * - URL-safe Base64로 인코딩한 문자열 반환
-     * @return
      */
     public String generateRefreshToken() {
         byte[] bytes = new byte[48]; // 충분히 큼(예측 불가)

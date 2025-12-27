@@ -53,6 +53,8 @@ date: send_count_date
 datetime5: created_at
 datetime6: updated_at
 
+./gradlew clean test --stacktrace
+grep -Rni --include="*.java" "AuthProperties" .
 */
 
 @SpringBootApplication

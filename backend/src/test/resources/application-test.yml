@@ -26,7 +26,7 @@ app:
     jwt:
       issuer: "kyonggi-board-test"
       access-ttl-seconds: 900
-      secret: "local-dev-jwt-secret-change-me-32-bytes-min!!!!!"
+      secret: "local-test-jwt-secret-change-me-32-bytes-min"
     refresh:
       cookie-name: "KG_REFRESH"
       cookie-path: "/auth"

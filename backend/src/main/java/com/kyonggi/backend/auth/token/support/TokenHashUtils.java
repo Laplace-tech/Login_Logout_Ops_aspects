@@ -11,9 +11,6 @@ import org.springframework.stereotype.Component;
  * - refresh token "원문"이 DB에 저장되면 유출 시 바로 악용 가능
  * - 그래서 DB에는 "해시(token_hash)"만 저장하고 실제 비교는 
  *   : incoming raw token -> (sha256Hex) -> DB token_hash와 비교
- * 
- * 
- * 
  */
 @Component
 public class TokenHashUtils {
