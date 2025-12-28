@@ -1,6 +1,7 @@
 package com.kyonggi.backend.security;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -20,6 +21,18 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
+/**
+ * Security Filter Chain에서 동작하는 JWT 인증 필터
+ * 
+ * - Authorization: Bearer <token> 헤더가 있으면 토큰을 꺼낸다. (Access Token(JWT))
+ * - JwtService로 검증해서 AuthPrincipal(userId, role)을 얻는다.
+ * - Spring Security가 이해할 수 있는 Authentication 객체를 만들어 SecurityContext에 넣는다.
+ * - 다음 필터/컨트롤러로 흐름을 넘긴다.
+ * 
+ * 주의:
+ * - "토큰이 없는 요청"은 여기서 막지 않는다. (실제로 막는 건 SecurityConfig의 authorize 규칙과 EntryPoint가 담당)
+ * - "토큰이 있는데 invalid"면 여기서 401 Unauthorized를 직접 내려준다.
+ */
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     
@@ -43,6 +56,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
+        // "Authorization: Bearer <token>" 여기에서 리프레쉬 토큰 원문을 추출
         String token = resolveToken(request);
         if (token == null) {
             // Authorization 헤더 없거나 Bearer 형식이 아니면, 이 필터는 그냥 넘김
@@ -51,27 +65,31 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         try {
-            // 1) JWT 검증 → 우리 서비스의 Principal 로 복원
+            // JWT 검증 → JwtParser로 토큰을 복원하여 AuthPrincipal를 만들어 반환 
             AuthPrincipal principal = jwtService.verifyAccessToken(token);
 
-            // 2) 권한(ROLE_*) 세팅
-            var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + principal.role()));
+            // Spring Security 권한 모델로 변환 (ROLE_ 접두사 관례)
+            String roleName = principal.role().startsWith("ROLE_")
+                ? principal.role()
+                : "ROLE_" + principal.role();
 
-            // 3) UsernamePasswordAuthenticationToken 생성해서 SecurityContext에 올리기
+            // 권한(ROLE_*) 세팅: ROLE_USER
+            var authorities = List.of(new SimpleGrantedAuthority(roleName));
+
+            // 3) UsernamePasswordAuthenticationToken 생성해서 SecurityContext에 주입
             var authentication = new UsernamePasswordAuthenticationToken(
                     principal,
                     null,
                     authorities
             );
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
             // 4) 나머지 필터/컨트롤러로 계속 진행
             filterChain.doFilter(request, response);
 
         } catch (JwtService.InvalidJwtException ex) {
-            // JWT가 잘못됐으면 인증정보 지우고 401 + JSON 에러 응답
+            // 토큰이 "있는 상태에서" 유효하지 않으면 여기서 401을 직접 내려서 즉시 종료
             SecurityContextHolder.clearContext();
             handleInvalidJwt(response);
         }
@@ -85,16 +103,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
         if(authHeader == null || authHeader.isBlank()) 
             return null;
-        if(!authHeader.startsWith(BEARER_PREFIX))
+        if(!authHeader.startsWith(BEARER_PREFIX)) 
             return null;
-        return authHeader.substring(BEARER_PREFIX.length()).trim();
+
+        String token = authHeader.substring(BEARER_PREFIX.length()).trim();
+        return token.isBlank() ? null : token;
     }
 
     /**
-     * JWT 유효하지 않을 때 401 + JSON 바디 내려주는 처리.
+     * invalid token일 때 내려줄 401 JSON 응답.
+     * EntryPoint는 “토큰 자체가 없어서 인증 실패”일 때 쓰고,
+     * 여기서는 “토큰이 있는데 invalid”일 때 쓴다.
      */
     private void handleInvalidJwt(HttpServletResponse response) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401 Unauthorized
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE); // application/json
 
         Map<String, Object> body = Map.of(

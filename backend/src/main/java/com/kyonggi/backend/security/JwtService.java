@@ -22,7 +22,7 @@ import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 
 /**
- * Access Token(JWT) 담당 서비스
+ * Access Token(JWT) 발급/검증 서비스
  * - 서버가 매번 DB를 조회하지 않고도(Stateless) 서명 검증만으로 "내가 발급한 토큰"인지 확인 가능
  * 
  * Access Token:
@@ -34,13 +34,14 @@ import io.jsonwebtoken.security.Keys;
  * - payload: 유저 정보(클레임: iss/sub/role/iat/exp 등)
  * - signature: header.payload를 서버 비밀키로 서명한 값(HMAC-SHA256)
  * 
- * 발급: issueAccessToken(userId, role) - Access Token(JWT)을 만들어서 발행하고
- * 검증: verifyAccessToken(token) - 다시 들어온 JWT가 진짜 내 거인지 확인한다.
+ * 발급: issueAccessToken(userId, role) - JWT 생성 (header/payload/signature를 jjwt가 알아서 만들어줌)
+ * 검증: verifyAccessToken(token) - 서명/만료/issuer 검증 후 AuthPrincipal로 복원
  */
 @Service
 public class JwtService {
 
-    private final static int MIN_SECRET_BYTES = 32;
+    private static final int MIN_SECRET_BYTES = 32;
+    private static final String ROLE_CLAIM = "role"; 
 
     private final AuthProperties.Jwt jwtProps;
     private final Clock clock;
@@ -54,7 +55,7 @@ public class JwtService {
         /**
          * [AuthProperties.Jwt.secret() -> secretBytes[] -> key -> jwtParser]
          * 
-         * 1. AuthProperties.Jwt에서 가져온 설정 값을 secret 바이트로 바꿈 (32Byte 이상)
+         * 1. AuthProperties.Jwt에서 가져온 설정 값을 secretBytes로 바꿈 (32Byte 이상)
          * 2. 그 바이트 배열로 secretKey를 만듦: Keys.hmacShaKeyFor(secretBytes)
          * 3. 이 키로 JwtParser를 하나 만들어놓고, issuer도 여기서 강제
          *     - 나중에 parseClaimsJws(token)으로 
@@ -63,12 +64,12 @@ public class JwtService {
          *       * issuer가 맞는지 확인
          */
         byte[] secretBytes = jwtProps.secret().getBytes(StandardCharsets.UTF_8);
-        if(secretBytes.length < MIN_SECRET_BYTES) {
-            throw new IllegalStateException(
-                String.format("JWT secret must be at least %d bytes for HS256", MIN_SECRET_BYTES)
-            );
+        if (secretBytes.length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException("JWT secret must be at least " + MIN_SECRET_BYTES + " bytes for HS256");
         }
-        this.key = Keys.hmacShaKeyFor(secretBytes); // jjwt에서 HMAC용 SecretKey 생성
+
+        // secretBytes로 HMAC용 SecretKey 생성
+        this.key = Keys.hmacShaKeyFor(secretBytes);
  
         // Parser 빌딩: 향후 verifyAccessToken()에서 지금 설정된 발행자(issuer)와 key로 검증
         this.jwtParser = Jwts.parserBuilder()
@@ -79,28 +80,28 @@ public class JwtService {
 
     // "userId, role" 기반으로 Access Token을 만들어 발행
     public String issueAccessToken(Long userId, String role) {
-        if(userId == null) {
-            throw new IllegalArgumentException("userId must not be null");
-        } 
-        if(role == null || role.isBlank()) {
-            throw new  IllegalArgumentException("role must not be blank");
-        }
+        if(userId == null) throw new IllegalArgumentException("userId must not be null");
+        if(role == null || role.isBlank()) throw new  IllegalArgumentException("role must not be blank");
 
         Instant now = clock.instant();
         Instant exp = now.plusSeconds(jwtProps.accessTtlSeconds());
-
+        
         return Jwts.builder()
-                .setIssuer(jwtProps.issuer())              // iss: issuer
-                .setSubject(String.valueOf(userId))        // sub: subject
-                .claim("role", role)                       // 커스텀 클레임 ("role": ...)
-                .setIssuedAt(Date.from(now))               // iat: issuedAt
-                .setExpiration(Date.from(exp))             // exp: expiredAt
-                
+                .setIssuer(jwtProps.issuer())           // iss
+                .setSubject(String.valueOf(userId))     // sub
+                .claim(ROLE_CLAIM, role)                // role
+                .setIssuedAt(Date.from(now))            // iat
+                .setExpiration(Date.from(exp))          // exp
                 .signWith(key, SignatureAlgorithm.HS256) // header.alg / signature 생성
                 .compact(); // header.payload.signature 문자열로 조합                
     }
 
-    // Access Token 검증 후, AuthPrincipal 리턴
+    /**
+     * Access Token 검증 후, AuthPrincipal 리턴
+     * 
+     * 실패하면 InvalidJwtException을 던진다
+     * - Filter에서 잡아서 401 JSON으로 변환
+     */
     public AuthPrincipal verifyAccessToken(String token) {
         try {
             if (token == null || token.isBlank()) 
@@ -120,11 +121,11 @@ public class JwtService {
 
             // 클레임에서 userId, role 꺼내기
             Long userId = parseUserId(claims);
-            String role = claims.get("role", String.class);
+            String role = claims.get(ROLE_CLAIM, String.class);
 
             if (role == null || role.isBlank()) 
                 throw new JwtException("role claim missing");
-            
+
             return new AuthPrincipal(userId, role);
         } catch (JwtException | IllegalArgumentException e) {
             throw new InvalidJwtException("Invalid JWT", e); // 여기서는 HTTP 모른다. 그냥 "JWT가 잘못됐다"는 도메인 예외만 던짐.
@@ -134,9 +135,9 @@ public class JwtService {
     // subject:userId -> Long userId 파싱
     private static Long parseUserId(Claims claims) {
         String sub = claims.getSubject();
-        if(sub == null || sub.isBlank()) {
+        if(sub == null || sub.isBlank()) 
             throw new JwtException("subject (userId) is missing");
-        }
+        
         try {
             return Long.valueOf(sub);
         } catch (NumberFormatException ex) {
@@ -157,8 +158,8 @@ public class JwtService {
     }
 
     /**
-     * 도메인용 JWT 예외.
-     * 컨트롤러/필터 쪽에서 잡아서 ApiException 이나 401 응답으로 바꾸면 됨.
+     * "HTTP를 모르는 도메인 예외"
+     * - Filter/Conroller에서 잡아서 ApiException 또는 401로 매핑하여 처리
      */
     public static class InvalidJwtException extends RuntimeException {
         public InvalidJwtException(String message, Throwable cause) {

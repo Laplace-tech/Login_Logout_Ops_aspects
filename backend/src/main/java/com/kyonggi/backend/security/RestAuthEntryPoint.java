@@ -1,6 +1,7 @@
 package com.kyonggi.backend.security;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import org.springframework.http.MediaType;
@@ -14,11 +15,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 /**
- * 인증이 안 된 상태에서 보호된 리소스에 접근했을 때
- * 401 + JSON 에러 응답을 내려주는 엔트리포인트.
- * 
- *  - 로그인 안 하고 /api/me 같은 곳에 접근할 때
- *  - JWT 아예 없는 요청이 보호된 엔드포인트로 들어왔을 때
+ * “인증이 필요한 엔드포인트”에 인증 없이 접근했을 때 호출되는 EntryPoint.
+ *
+ * - Authorization 헤더 자체가 없어서 인증이 비어있는 상태로 보호 리소스에 접근했을 때
+ * - SecurityConfig의 authorize 규칙에서 authenticated() 걸린 요청인데 인증이 없을 때
+ *
+ * 반대로,
+ * - Authorization 헤더가 있고 토큰이 invalid인 경우는 JwtAuthenticationFilter가 401을 내려버린다.
  */
 @RequiredArgsConstructor
 public class RestAuthEntryPoint implements AuthenticationEntryPoint {
@@ -37,14 +40,13 @@ public class RestAuthEntryPoint implements AuthenticationEntryPoint {
             return;
         }
 
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401 Unauthorized
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE); // "application/json"
 
-        Map<String, Object> body = Map.of(
+        objectMapper.writeValue(response.getWriter(), Map.of(
                 "code", "AUTH_REQUIRED",
                 "message", "인증이 필요합니다."
-        );
-
-        objectMapper.writeValue(response.getWriter(), body);
+        ));
     }
 }

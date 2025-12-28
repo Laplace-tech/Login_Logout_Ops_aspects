@@ -30,12 +30,22 @@ curl -i -X POST "http://localhost:8080/auth/signup/otp/request" \
 [OTP 검증]
 curl -i -X POST "http://localhost:8080/auth/signup/otp/verify" \
   -H "Content-Type: application/json" \
-  -d '{"email":"add28482848@kyonggi.ac.kr","code":"172904"}'
+  -d '{"email":"add28482848@kyonggi.ac.kr","code":"830145"}'
 
 [가입 완료]
 curl -i -X POST "http://localhost:8080/auth/signup/complete" \
   	-H "Content-Type: application/json" \
-  	-d '{"email":"add28482848@kyonggi.ac.kr","password":"Abcdef12!","passwordConfirm":"Abcdef12!","nickname":"Anna"}'
+  	-d '{"email":"add28482848@kyonggi.ac.kr","password":"28482848a!","passwordConfirm":"28482848a!","nickname":"Anna"}'
+
+[로그인] - 리프레쉬 토큰 /tmp/kyonggi_cookie.txt 에 저장
+curl -i -X POST "http://localhost:8080/auth/login" \
+  -H "Content-Type: application/json" \
+  -c /tmp/kyonggi_cookie.txt \
+  -d '{"email":"add28482848@kyonggi.ac.kr","password":"28482848a!","rememberMe":false}'
+
+[me 호출]
+curl -i -X GET "http://localhost:8080/auth/me" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJreW9uZ2dpLWJvYXJkIiwic3ViIjoiMSIsInJvbGUiOiJVU0VSIiwiaWF0IjoxNzY2OTExODg0LCJleHAiOjE3NjY5MTI3ODR9.firSiZZ6HvNiDFLUIAAVtKeIaOrUf9L8zuVDNXzBQwE"
 
 [DB 확인]
 dmysql -e "select * from users;"
@@ -57,6 +67,15 @@ datetime6: updated_at
 grep -Rni --include="*.java" "AuthProperties" .
 */
 
+
+
+/**
+ * ApplicationContext (스프링 컨테이너): 
+ * - 애플리케이션을 구성하는 @Bean(컴포넌트)들의 의존성 그래프를 만들고, 생명주기를 관리하는 런타임
+ * - @SpringBootApplication이 붙은 메인 클래스 패기지를 기준으로 하위 패키지를 스캔 (컴포넌트 스캔 / 구성 클래스 파싱)
+ * - @Component/@Service/@Repository/@Controller 등을 스캔해서 컨텍스트에 자동 등록
+ * 
+ */
 @SpringBootApplication
 @Import(AuthModuleConfig.class)
 public class BackendApplication {

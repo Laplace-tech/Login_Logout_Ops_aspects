@@ -1,5 +1,12 @@
-spring:
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
+spring:
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/kyonggi_board?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8
     username: kyonggi
@@ -25,9 +32,6 @@ spring:
       mail.smtp.auth: false
       mail.smtp.starttls.enable: false
 
-server:
-  port: 8080
-
 app:
   auth:
     jwt:
@@ -38,10 +42,10 @@ app:
       cookie-name: "KG_REFRESH"
       cookie-path: "/auth"
       cookie-same-site: "Lax"
-      cookie-secure: false   # 로컬은 false, 운영은 true로 바꾸거나 profile로 분리
-      remember-me-seconds: 604800  # 7d
-      session-ttl-seconds: 86400   # rememberMe=false일 때 서버 만료(권장 1d)
-      
+      cookie-secure: false
+      remember-me-seconds: 604800
+      session-ttl-seconds: 86400
+
   otp:
     ttl-minutes: 10
     max-failures: 5

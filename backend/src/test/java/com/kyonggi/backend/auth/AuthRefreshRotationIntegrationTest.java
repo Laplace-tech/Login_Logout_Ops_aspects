@@ -70,123 +70,141 @@ class AuthRefreshRotationIntegrationTest {
         userRepository.deleteAll();
     }
 
+    /** 로그인 성공 시 refresh token은 "원문은 쿠키", "해시는 DB"에 저장 */
     @Test
-    void login_saves_refreshToken_in_db() throws Exception {
-        MvcResult res = mvc.perform(post("/auth/login")
-                        .contentType("application/json")
-                        .content("""
-                                {"email":"%s","password":"%s","rememberMe":false}
-                                """.formatted(EMAIL, PASSWORD))
-                )
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                // Set-Cookie는 여러 개일 수 있지만, 최소한 KG_REFRESH는 포함돼야 함
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE + "=")))
-                .andReturn();
+    void login_saves_refreshToken_hash_in_db_and_sets_cookie() throws Exception {
+        var login = AuthTestSupport.login(mvc, EMAIL, PASSWORD, false);
 
-        String refreshRaw = extractCookieValueFrom(res, REFRESH_COOKIE);
-        assertThat(refreshRaw).isNotBlank();
+        assertThat(login.refreshRaw()).isNotBlank();
+        assertThat(login.accessToken()).isNotBlank();
 
-        String hash = tokenHashUtils.sha256Hex(refreshRaw);
+        String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
         var saved = refreshTokenRepository.findByTokenHash(hash);
 
         assertThat(saved).isPresent();
         assertThat(saved.get().isRevoked()).isFalse();
+        assertThat(saved.get().isRememberMe()).isFalse();
+
+        // rememberMe=false이면 session cookie여서 Max-Age가 없어야 한다(정책상)
+        String setCookieLine = AuthTestSupport.findSetCookieLine(login.setCookieHeaders(), REFRESH_COOKIE);
+        assertThat(setCookieLine).contains("HttpOnly");
+        assertThat(setCookieLine).contains("Path=/auth");
+        assertThat(setCookieLine).contains("SameSite=Lax");
+        assertThat(setCookieLine).doesNotContain("Max-Age=");
     }
 
+    /** rememberMe=true면 쿠키에 Max-Age가 붙고 DB에도 remember_me=true로 저장 */
+    @Test
+    void login_with_rememberMe_sets_persistent_cookie_and_db_flag() throws Exception {
+        var login = AuthTestSupport.login(mvc, EMAIL, PASSWORD, true);
+
+        String setCookieLine = AuthTestSupport.findSetCookieLine(login.setCookieHeaders(), REFRESH_COOKIE);
+        assertThat(setCookieLine).contains("Max-Age="); // 지속 쿠키
+
+        String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
+        var saved = refreshTokenRepository.findByTokenHash(hash);
+        assertThat(saved).isPresent();
+        assertThat(saved.get().isRememberMe()).isTrue();
+        assertThat(saved.get().isRevoked()).isFalse();
+    }
+
+    /** refresh 호출 시: old revoke + new 발급 + access 재발급 */
     @Test
     void refresh_rotates_token_and_revokes_old() throws Exception {
-        // 1) 로그인해서 refresh cookie 확보
-        MvcResult loginRes = mvc.perform(post("/auth/login")
-                        .contentType("application/json")
-                        .content("""
-                                {"email":"%s","password":"%s","rememberMe":false}
-                                """.formatted(EMAIL, PASSWORD))
-                )
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andReturn();
+        var login = AuthTestSupport.login(mvc, EMAIL, PASSWORD, false);
 
-        String oldRaw = extractCookieValueFrom(loginRes, REFRESH_COOKIE);
+        String oldRaw = login.refreshRaw();
         String oldHash = tokenHashUtils.sha256Hex(oldRaw);
 
         var oldRowBefore = refreshTokenRepository.findByTokenHash(oldHash);
         assertThat(oldRowBefore).isPresent();
         assertThat(oldRowBefore.get().isRevoked()).isFalse();
 
-        // 2) refresh 호출 -> 새 access + 새 refresh
-        MvcResult refreshRes = mvc.perform(post("/auth/refresh")
-                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw))
-                )
+        var refreshRes = mvc.perform(post("/auth/refresh")
+                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
                 .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE + "=")))
                 .andReturn();
 
-        String newRaw = extractCookieValueFrom(refreshRes, REFRESH_COOKIE);
+        String newRaw = AuthTestSupport.extractCookieValue(
+                refreshRes.getResponse().getHeaders(HttpHeaders.SET_COOKIE),
+                REFRESH_COOKIE
+        );
 
         assertThat(newRaw).isNotBlank();
         assertThat(newRaw).isNotEqualTo(oldRaw);
 
-        // 3) DB에서 old는 revoked, new는 active
+        // old는 revoked
         var oldRowAfter = refreshTokenRepository.findByTokenHash(oldHash);
         assertThat(oldRowAfter).isPresent();
         assertThat(oldRowAfter.get().isRevoked()).isTrue();
         assertThat(oldRowAfter.get().getRevokeReason()).isEqualTo("ROTATED");
 
+        // new는 active
         String newHash = tokenHashUtils.sha256Hex(newRaw);
         var newRow = refreshTokenRepository.findByTokenHash(newHash);
         assertThat(newRow).isPresent();
         assertThat(newRow.get().isRevoked()).isFalse();
     }
 
+    /** refresh에 쿠키가 없으면 컨트롤러에서 바로 REFRESH_INVALID */
+    @Test
+    void refresh_without_cookie_returns_refresh_invalid() throws Exception {
+        mvc.perform(post("/auth/refresh"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_INVALID"));
+    }
+
+    /** 존재하지 않는 refresh 토큰이면 rotate에서 REFRESH_INVALID */
+    @Test
+    void refresh_with_unknown_token_returns_refresh_invalid() throws Exception {
+        mvc.perform(post("/auth/refresh")
+                        .cookie(new Cookie(REFRESH_COOKIE, "definitely-not-issued-by-server")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_INVALID"));
+    }
+
+    /** old 토큰 재사용은 차단(REFRESH_REUSED) */
     @Test
     void refresh_reusing_old_token_is_blocked() throws Exception {
-        // 로그인
-        MvcResult loginRes = mvc.perform(post("/auth/login")
-                        .contentType("application/json")
-                        .content("""
-                                {"email":"%s","password":"%s","rememberMe":false}
-                                """.formatted(EMAIL, PASSWORD))
-                )
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String oldRaw = extractCookieValueFrom(loginRes, REFRESH_COOKIE);
+        var login = AuthTestSupport.login(mvc, EMAIL, PASSWORD, false);
+        String oldRaw = login.refreshRaw();
 
         // 1회 refresh -> old는 revoke
         mvc.perform(post("/auth/refresh")
-                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw))
-                )
+                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw)))
                 .andExpect(status().isOk());
 
-        // 같은 토큰 다시 사용 -> 401 + REFRESH_REUSED 기대
+        // 같은 old token 재사용 -> 차단
         mvc.perform(post("/auth/refresh")
-                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw))
-                )
+                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("REFRESH_REUSED"));
     }
 
-    // ----------------- helpers -----------------
+    /** rememberMe=true 세션은 rotate 후에도 rememberMe 유지 + 쿠키 Max-Age 유지 */
+    @Test
+    void refresh_rotation_preserves_rememberMe_policy() throws Exception {
+        var login = AuthTestSupport.login(mvc, EMAIL, PASSWORD, true);
+        String oldRaw = login.refreshRaw();
 
-    /**
-     * Set-Cookie 헤더가 여러 개여도 안전하게 cookieName 값만 찾아서 추출.
-     */
-    private static String extractCookieValueFrom(MvcResult res, String cookieName) {
-        List<String> setCookies = res.getResponse().getHeaders(HttpHeaders.SET_COOKIE);
-        if (setCookies == null || setCookies.isEmpty()) {
-            throw new IllegalStateException("Set-Cookie header missing");
-        }
+        var refreshRes = mvc.perform(post("/auth/refresh")
+                        .cookie(new Cookie(REFRESH_COOKIE, oldRaw)))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE + "=")))
+                .andReturn();
 
-        Pattern p = Pattern.compile("(^|;\\s*)" + Pattern.quote(cookieName) + "=([^;]+)");
-        for (String headerValue : setCookies) {
-            Matcher m = p.matcher(headerValue);
-            if (m.find()) {
-                return m.group(2);
-            }
-        }
+        var setCookies = refreshRes.getResponse().getHeaders(HttpHeaders.SET_COOKIE);
+        String line = AuthTestSupport.findSetCookieLine(setCookies, REFRESH_COOKIE);
+        assertThat(line).contains("Max-Age="); // rememberMe=true 유지
 
-        throw new IllegalStateException("Cookie " + cookieName + " not found. headers=" + setCookies);
+        String newRaw = AuthTestSupport.extractCookieValue(setCookies, REFRESH_COOKIE);
+        String newHash = tokenHashUtils.sha256Hex(newRaw);
+
+        var newRow = refreshTokenRepository.findByTokenHash(newHash);
+        assertThat(newRow).isPresent();
+        assertThat(newRow.get().isRememberMe()).isTrue();
+        assertThat(newRow.get().isRevoked()).isFalse();
     }
 }

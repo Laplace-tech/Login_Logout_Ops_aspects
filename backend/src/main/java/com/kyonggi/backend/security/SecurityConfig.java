@@ -21,11 +21,14 @@ import lombok.RequiredArgsConstructor;
  * 
  *  2) Spring Security 동작 구조
  *  - 모든 HTTP 요청은 @Controller에 도달하기 전에 "Security Filter Chain"을 먼저 통과함
- *  - 인증/인가 실패 시 @Controller 까지 도달하지 못함
+ *  - 인증/인가 실패 시 @Controller 까지 도달하지 못함.
  * 
  *  3) SecurityFilterChain
  *  - 여러 보안 필터(Authentication, Authorization)의 묶음
  *  - 어떤 요청을 허용/차단할지 이 체인에서 결정
+ * 
+ * - JwtAuthenticationFilter가 Authorization 헤더를 검사하고 유효하면 SecurityContext에 인증 정보를 세팅한다.
+ * - authorizeHttpRequest에서 "인증 필요"인 요청인데 인증이 없으면 EntryPoint가 401 Unauthorized 응답을 내려준다.
  */
 @Configuration
 @RequiredArgsConstructor
@@ -37,28 +40,27 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
-                .csrf(csrf -> csrf.disable()) // CSRF 비활성화 - 세션/쿠키 기반 인증을 쓰지 않기 때문에 필요 없음
+                .csrf(csrf -> csrf.disable()) // CSRF 비활성화 - 지금은 REST API + JWT 방식이고 "세션/쿠키 기반 인증"을 쓰지 않기 때문에 필요 없음.
                 .httpBasic(b -> b.disable()) // HTTP Basic 인증 비활성화 - Authorization: Basic ... 방식 사용 안 함
                 .formLogin(f -> f.disable()) // formLogin 비활성화 - 스프링 기본 로그인 페이지 사용 안 함
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // 세션 사용 안 함 - 로그인 상태를 서버 세션에 저장하지 않음
                 
-                // 인증이 안 된 상태로 보호된 리소스 접근 시 어떻게 응답할지
+                // 인증 실패(= 인증 없이 보호 리소스 접근) 응답 방식 커스터마이즈 - 401 Unauthorized
                 .exceptionHandling(eh -> eh
                         .authenticationEntryPoint(new RestAuthEntryPoint(objectMapper))
                 )
 
-                // JWT 필터 등록:
-                // UsernamePasswordAuthenticationFilter 전에 실행되도록 설정
+                // JWT 필터 등록: UsernamePasswordAuthenticationFilter 전에 실행되도록 설정
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtService, objectMapper),
                         UsernamePasswordAuthenticationFilter.class
                 )
 
-                // 요청별 접근 권한 설정
+                // URL별 접근 제어
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/error").permitAll() // 스프링 내부 에러 페이지 접근 허용
 
-                        // 공개 auth 엔드포인트만 permitAll
+                        // 회원가입/로그인/토큰 재발급/로그아웃은 비로그인 허용
                         .requestMatchers("/auth/signup/**").permitAll()
                         .requestMatchers("/auth/login").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
