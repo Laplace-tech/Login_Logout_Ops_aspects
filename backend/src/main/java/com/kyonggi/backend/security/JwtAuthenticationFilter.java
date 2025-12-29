@@ -1,19 +1,16 @@
 package com.kyonggi.backend.security;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kyonggi.backend.global.ErrorCode;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -37,11 +34,9 @@ import lombok.RequiredArgsConstructor;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     
     private static final String BEARER_PREFIX = "Bearer ";
-    private static final String ERROR_CODE = "ACCESS_INVALID";
-    private static final String ERROR_MESSAGE = "엑세스 토큰이 유효하지 않습니다.";
 
     private final JwtService jwtService;
-    private final ObjectMapper objectMapper;
+    private final SecurityErrorWriter errorWriter;
 
     @Override
     protected void doFilterInternal(
@@ -89,9 +84,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
 
         } catch (JwtService.InvalidJwtException ex) {
-            // 토큰이 "있는 상태에서" 유효하지 않으면 여기서 401을 직접 내려서 즉시 종료
+            /**
+             * invalid token일 때 내려줄 401 JSON 응답.
+             * EntryPoint는 “토큰 자체가 없어서 인증 실패”일 때 쓰고,
+             * 여기서는 “토큰이 있는데 invalid”일 때 쓴다.
+             */
             SecurityContextHolder.clearContext();
-            handleInvalidJwt(response);
+            errorWriter.write(response, ErrorCode.ACCESS_INVALID); // ApiError.of(errorCode.name(), errorCode.defaultMessage());
         }
     }
 
@@ -108,24 +107,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String token = authHeader.substring(BEARER_PREFIX.length()).trim();
         return token.isBlank() ? null : token;
-    }
-
-    /**
-     * invalid token일 때 내려줄 401 JSON 응답.
-     * EntryPoint는 “토큰 자체가 없어서 인증 실패”일 때 쓰고,
-     * 여기서는 “토큰이 있는데 invalid”일 때 쓴다.
-     */
-    private void handleInvalidJwt(HttpServletResponse response) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401 Unauthorized
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE); // application/json
-
-        Map<String, Object> body = Map.of(
-            "code", ERROR_CODE, 
-            "message", ERROR_MESSAGE
-        );
-
-        objectMapper.writeValue(response.getWriter(), body);
     }
 
 }

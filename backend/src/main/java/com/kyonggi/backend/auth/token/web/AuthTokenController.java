@@ -1,6 +1,5 @@
 package com.kyonggi.backend.auth.token.web;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -8,6 +7,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.kyonggi.backend.auth.token.service.RefreshTokenService;
 import com.kyonggi.backend.auth.token.support.AuthCookieUtils;
 import com.kyonggi.backend.global.ApiException;
+import com.kyonggi.backend.global.ErrorCode;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -29,11 +29,7 @@ public class AuthTokenController {
 
         // refresh 토큰이 없거나 비어있으면 즉시 거절
         if (refreshRaw == null || refreshRaw.isBlank()) {
-            throw new ApiException(
-                    HttpStatus.UNAUTHORIZED,
-                    "REFRESH_INVALID",
-                    "리프레시 토큰이 유효하지 않습니다."
-            );
+            throw new ApiException(ErrorCode.REFRESH_INVALID);
         }
 
         /**

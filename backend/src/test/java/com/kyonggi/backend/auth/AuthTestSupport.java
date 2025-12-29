@@ -75,5 +75,6 @@ public final class AuthTestSupport {
         Matcher m = p.matcher(json);
         if (!m.find()) throw new IllegalStateException("JSON field not found: " + field + ", json=" + json);
         return m.group(1);
+        
     }
 }

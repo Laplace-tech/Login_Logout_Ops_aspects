@@ -1,14 +1,11 @@
 package com.kyonggi.backend.security;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
 
-import org.springframework.http.MediaType;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kyonggi.backend.global.ErrorCode;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -26,27 +23,14 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class RestAuthEntryPoint implements AuthenticationEntryPoint {
 
-    private final ObjectMapper objectMapper;
+    private final SecurityErrorWriter errorWriter;
 
     @Override
     public void commence(
             HttpServletRequest request,
             HttpServletResponse response,
-            AuthenticationException authException
-    ) throws IOException {
+            AuthenticationException authException) throws IOException {
 
-        // 이미 다른 필터가 응답을 만들어버린 경우라면 건드리지 않음
-        if (response.isCommitted()) {
-            return;
-        }
-
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401 Unauthorized
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE); // "application/json"
-
-        objectMapper.writeValue(response.getWriter(), Map.of(
-                "code", "AUTH_REQUIRED",
-                "message", "인증이 필요합니다."
-        ));
+        errorWriter.write(response, ErrorCode.AUTH_REQUIRED); // ApiError.of(errorCode.name(), errorCode.defaultMessage())
     }
 }

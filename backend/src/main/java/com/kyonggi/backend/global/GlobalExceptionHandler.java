@@ -1,6 +1,7 @@
 package com.kyonggi.backend.global;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -30,7 +31,8 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of(
                         e.getCode(),                 // 비즈니스 에러 코드
                         e.getMessage(),              // 사용자 메시지
-                        e.getRetryAfterSeconds()     // 재시도 시간(없으면 null)
+                        e.getRetryAfterSeconds(),     // 재시도 시간(없으면 null)
+                        e.getDetails()
                 ));
     }
 
@@ -51,7 +53,9 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity
                 .status(BAD_REQUEST) // 응답은 항상 동일한 포맷으로 단순화
-                .body(ApiError.of("VALIDATION_ERROR", "요청 값이 올바르지 않습니다."));
+                .body(ApiError.of(
+                        ErrorCode.VALIDATION_ERROR.name(),
+                        ErrorCode.VALIDATION_ERROR.defaultMessage()));
     }
 
     /**
@@ -63,6 +67,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handle(ConstraintViolationException e) {
         return ResponseEntity
                 .status(BAD_REQUEST)
-                .body(ApiError.of("VALIDATION_ERROR", "요청 값이 올바르지 않습니다."));
+                .body(ApiError.of(
+                        ErrorCode.VALIDATION_ERROR.name(),
+                        ErrorCode.VALIDATION_ERROR.defaultMessage())
+                );
     }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiError> handle(Exception e) {
+        log.error("Unhandled exception", e);
+        return ResponseEntity
+                .status(INTERNAL_SERVER_ERROR)
+                .body(ApiError.of(
+                        ErrorCode.INTERNAL_ERROR.name(), 
+                        ErrorCode.INTERNAL_ERROR.defaultMessage()));
+    }
+
 }

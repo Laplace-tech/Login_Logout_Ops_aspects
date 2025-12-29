@@ -3,10 +3,8 @@ package com.kyonggi.backend.security;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.Date;
 
-import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 
 import org.springframework.stereotype.Service;
@@ -144,18 +142,7 @@ public class JwtService {
             throw new JwtException("subject is not a valid Long: " + sub, ex);
         }
     }
-    
-    // HMAC-SHA256 서명 생성 (서버 비밀키 사용)
-    private byte[] hmacSha256(byte[] data) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(this.key); // 생성자에서 만든 SecretKey 재사용
-        return mac.doFinal(data);
-    }
 
-    // Base64 URL-safe 인코딩 (JWT 표준) 
-    private String b64Url(byte[] bytes) {
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
 
     /**
      * "HTTP를 모르는 도메인 예외"
@@ -220,4 +207,15 @@ public class JwtService {
     //     } catch (Exception e) {
     //         throw new IllegalStateException("Failed to issue JWT", e);
     //     }
+    // }
+    //     // HMAC-SHA256 서명 생성 (서버 비밀키 사용)
+    // private byte[] hmacSha256(byte[] data) throws Exception {
+    //     Mac mac = Mac.getInstance("HmacSHA256");
+    //     mac.init(this.key); // 생성자에서 만든 SecretKey 재사용
+    //     return mac.doFinal(data);
+    // }
+
+    // // Base64 URL-safe 인코딩 (JWT 표준) 
+    // private String b64Url(byte[] bytes) {
+    //     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     // }

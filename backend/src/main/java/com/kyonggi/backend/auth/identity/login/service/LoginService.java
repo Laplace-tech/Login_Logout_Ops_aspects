@@ -1,6 +1,5 @@
 package com.kyonggi.backend.auth.identity.login.service;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -9,6 +8,7 @@ import com.kyonggi.backend.auth.identity.signup.support.KyonggiEmailUtils;
 import com.kyonggi.backend.auth.repo.UserRepository;
 import com.kyonggi.backend.auth.token.service.RefreshTokenService;
 import com.kyonggi.backend.global.ApiException;
+import com.kyonggi.backend.global.ErrorCode;
 import com.kyonggi.backend.security.JwtService;
 
 import lombok.RequiredArgsConstructor;
@@ -41,33 +41,21 @@ public class LoginService {
     public LoginResult login(String rawEmail, String rawPassword, boolean rememberMe) {
         
         // 이메일 도메인 강제 (@kyonggi.ac.kr)
-        String email = KyonggiEmailUtils.normalizeEmail(rawEmail);
-        KyonggiEmailUtils.validateDomain(email);
+        KyonggiEmailUtils.validateKyonggiDomain(rawEmail);
+        String email = KyonggiEmailUtils.normalize(rawEmail);
 
-        // 이메일 기반 사용자(User) 조회
+        // 사용자 조회
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ApiException(
-                                HttpStatus.UNAUTHORIZED, // 401 Unauthorized
-                                "INVALID_CREDENTIALS", 
-                                "이메일 또는 비밀번호가 올바르지 않습니다.")
-                            );
+                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CREDENTIALS));
 
         // 비밀번호 매칭 (incoming raw password를 해싱하여 USERS 테이블과 대조)
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
-            throw new ApiException(
-                HttpStatus.UNAUTHORIZED, // 401 Unauthorized
-                "INVALID_CREDENTIALS", 
-                "이메일 또는 비밀번호가 올바르지 않습니다."
-            );
+            throw new ApiException(ErrorCode.INVALID_CREDENTIALS);
         }
 
         // ACTIVE만 허용 (enum 값명 몰라도 name()으로 안전하게 체크)
         if (user.getStatus() == null || !"ACTIVE".equals(user.getStatus().name())) {
-            throw new ApiException(
-                HttpStatus.FORBIDDEN, // 403 Forbidden
-                "ACCOUNT_DISABLED", 
-                "사용할 수 없는 계정 상태입니다."
-            );
+            throw new ApiException(ErrorCode.ACCOUNT_DISABLED);
         }
 
         /**

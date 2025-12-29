@@ -16,18 +16,46 @@ public class ApiException extends RuntimeException {
     private final HttpStatus status; // HTTP 응답 상태코드
     private final String code; // 에러 식별 코드
     private final Integer retryAfterSeconds; // 재시도 가능 시간
+    private final Object details;
 
-    public ApiException(HttpStatus status, String code, String message) {
-        super(message);
-        this.status = status;
-        this.code = code;
+    // ✅ 실무형(중앙화된 ErrorCode 기반)
+    public ApiException(ErrorCode errorCode) {
+        super(errorCode.defaultMessage());
+        this.status = errorCode.status();
+        this.code = errorCode.name();
         this.retryAfterSeconds = null;
+        this.details = null;
     }
 
-    public ApiException(HttpStatus status, String code, String message, Integer retryAfterSeconds) {
-        super(message);
-        this.status = status;
-        this.code = code;
+    public ApiException(ErrorCode errorCode, String messageOverride) {
+        super(messageOverride);
+        this.status = errorCode.status();
+        this.code = errorCode.name();
+        this.retryAfterSeconds = null;
+        this.details = null;
+    }
+
+    public ApiException(ErrorCode errorCode, Integer retryAfterSeconds) {
+        super(errorCode.defaultMessage());
+        this.status = errorCode.status();
+        this.code = errorCode.name();
         this.retryAfterSeconds = retryAfterSeconds;
+        this.details = null;
+    }
+
+    public ApiException(ErrorCode errorCode, Integer retryAfterSeconds, Object details) {
+        super(errorCode.defaultMessage());
+        this.status = errorCode.status();
+        this.code = errorCode.name();
+        this.retryAfterSeconds = retryAfterSeconds;
+        this.details = details;
+    }
+
+    public ApiException(ErrorCode errorCode, String messageOverride, Integer retryAfterSeconds, Object details) {
+        super(messageOverride);
+        this.status = errorCode.status();
+        this.code = errorCode.name();
+        this.retryAfterSeconds = retryAfterSeconds;
+        this.details = details;
     }
 }

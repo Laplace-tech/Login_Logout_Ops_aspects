@@ -8,8 +8,6 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -35,7 +33,17 @@ import lombok.RequiredArgsConstructor;
 public class SecurityConfig {
 
     private final JwtService jwtService;
-    private final ObjectMapper objectMapper;
+    private final SecurityErrorWriter securityErrorWriter;
+
+    @Bean
+    RestAuthEntryPoint restAuthEntryPoint() {
+        return new RestAuthEntryPoint(securityErrorWriter);
+    }
+
+    @Bean
+    JwtAuthenticationFilter jwtAuthenticationFilter() {
+        return new JwtAuthenticationFilter(jwtService, securityErrorWriter);
+    }
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -47,12 +55,12 @@ public class SecurityConfig {
                 
                 // 인증 실패(= 인증 없이 보호 리소스 접근) 응답 방식 커스터마이즈 - 401 Unauthorized
                 .exceptionHandling(eh -> eh
-                        .authenticationEntryPoint(new RestAuthEntryPoint(objectMapper))
+                        .authenticationEntryPoint(restAuthEntryPoint())
                 )
 
                 // JWT 필터 등록: UsernamePasswordAuthenticationFilter 전에 실행되도록 설정
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtService, objectMapper),
+                        jwtAuthenticationFilter(),
                         UsernamePasswordAuthenticationFilter.class
                 )
 

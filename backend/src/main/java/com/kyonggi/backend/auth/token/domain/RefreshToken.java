@@ -43,7 +43,7 @@ public class RefreshToken {
     @Column(name = "user_id", nullable = false)
     private Long userId; // 이 refresh 세션이 "누구(user)"의 것인지
 
-    @Column(name = "token_hash", nullable = false, length = 64, unique = true)
+    @Column(name = "token_hash", nullable = false, unique = true, length = 64, columnDefinition = "char(64)")
     private String tokenHash; // sha256 hex(64자). raw는 저장 금지!
 
     @Column(name = "remember_me", nullable = false)

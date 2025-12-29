@@ -5,16 +5,8 @@ import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
-/*
- * app:
- *   otp:
- *     ttl-minutes: 10
- *     max-failures: 5
- *     resend-cooldown-seconds: 60
- *     daily-send-limit: 10
- *     hmac-secret: "${APP_OTP_HMAC_SECRET:local-dev-otp-secret-change-me}"
- */
 
 /**
  * OTP 관련 정책 설정
@@ -28,5 +20,5 @@ public record OtpProperties(
         @Min(1) int maxFailures,
         @Min(1) int resendCooldownSeconds,
         @Min(1) int dailySendLimit,
-        @NotBlank String hmacSecret
+        @NotBlank @Size(min = 32)String hmacSecret
 ) {}
