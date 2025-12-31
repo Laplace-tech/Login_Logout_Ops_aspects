@@ -12,11 +12,11 @@ services:
       MYSQL_USER: kyonggi
       MYSQL_PASSWORD: kyonggi
       TZ: Asia/Seoul
-    # ✅ 호스트 포트 바인딩 제거 (3306 충돌/WSL 포워딩 500 방지)
-    # ports:
-    #   - "127.0.0.1:3306:3306"
+    ports:
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       interval: 5s
@@ -37,22 +37,18 @@ services:
       dockerfile: Dockerfile
     container_name: kyonggi-backend
     ports:
-      - "8080:8080"   # ✅ 너는 여기로 API 테스트(curl/Postman)함
+      - "8080:8080"
     restart: on-failure
     environment:
-      # ✅ 이게 없어서 계속 default로 뜬 거다
       SPRING_PROFILES_ACTIVE: local
 
-      # ✅ 컨테이너 내부에서 DB/메일은 "서비스명"으로 접근
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/kyonggi_board?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8
       SPRING_DATASOURCE_USERNAME: kyonggi
       SPRING_DATASOURCE_PASSWORD: kyonggi
 
       SPRING_MAIL_HOST: mailhog
-      SPRING_MAIL_PORT: 1025 
+      SPRING_MAIL_PORT: 1025
 
-      # ✅ application.yml의 ${APP_AUTH_JWT_SECRET}, ${APP_OTP_HMAC_SECRET} 채워주는 값
-      # ✅ ${VAR:?msg} -> VAR가 “unset 이거나 빈 문자열”이면 즉시 에러 + msg 출력
       APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:?set in infra/.env}
       APP_OTP_HMAC_SECRET: ${APP_OTP_HMAC_SECRET:?set in infra/.env}
 

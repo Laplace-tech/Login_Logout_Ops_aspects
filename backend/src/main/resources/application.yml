@@ -14,7 +14,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
-    open-in-view: false 
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     properties:
@@ -54,4 +54,3 @@ app:
     resend-cooldown-seconds: 20
     daily-send-limit: 3
     hmac-secret: ${APP_OTP_HMAC_SECRET}
-    

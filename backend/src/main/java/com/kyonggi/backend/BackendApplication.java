@@ -25,22 +25,22 @@ sudo lsof -i
 [rebuild]
 sudo docker compose up -d --build backend
 
-# OTP 요청
+# OTP 요청 204
 curl -i -X POST "http://localhost:8080/auth/signup/otp/request" \
   -H "Content-Type: application/json" \
   -d '{"email":"add28482848@kyonggi.ac.kr"}'
 
-# OTP 검증
+# OTP 검증 204
 curl -i -X POST "http://localhost:8080/auth/signup/otp/verify" \
   -H "Content-Type: application/json" \
-  -d '{"email":"add28482848@kyonggi.ac.kr","code":"286850"}'
+  -d '{"email":"add28482848@kyonggi.ac.kr","code":"717370"}'
 
-# 가입 완료
+# 가입 완료 201
 curl -i -X POST "http://localhost:8080/auth/signup/complete" \
   -H "Content-Type: application/json" \
   -d '{"email":"add28482848@kyonggi.ac.kr","password":"28482848a!","passwordConfirm":"28482848a!","nickname":"Anna"}'
 
-# 로그인 (쿠키 파일에 저장)
+# 로그인 (쿠키 파일에 저장) 200
 curl -i -X POST "http://localhost:8080/auth/login" \
   -H "Content-Type: application/json" \
   -c /tmp/kyonggi_cookie.txt \
