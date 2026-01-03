@@ -94,6 +94,10 @@ public class RefreshTokenService {
 
         // 1) 재사용(폐기된 토큰 재제출) 감지 우선
         if (old.isRevoked()) {
+            String reason = old.getRevokeReason(); // null 가능
+            if(RefreshRevokeReason.ROTATED.name().equals(reason)) {
+                throw new ApiException(ErrorCode.REFRESH_REUSED);
+            }
             throw new ApiException(ErrorCode.REFRESH_REUSED); // 메시지 뭉개기 OK
         }
 

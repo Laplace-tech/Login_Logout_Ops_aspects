@@ -9,7 +9,7 @@ import com.kyonggi.backend.auth.config.OtpProperties;
 import lombok.RequiredArgsConstructor;
 
 /**
- * 회원 가입 OTP 메일 발송 컴포넌트
+ * 회원 가입 OTP 메일 발송 어댑터
  * 
  * @Component
  * - 비즈니스 서비스가 아닌 "외부 I/O 어댑터"
@@ -22,14 +22,20 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SignupMailSender {
 
+    private static final String SUBJECT = "[경기대 커뮤니티] 회원가입 인증번호";
+
     private final JavaMailSender mailSender;
     private final OtpProperties props;
 
     public void sendOtp(String toEmail, String code) {
         SimpleMailMessage msg = new SimpleMailMessage();
         msg.setTo(toEmail);
-        msg.setSubject("[경기대 커뮤니티] 회원가입 인증번호");
-        msg.setText("인증번호: " + code + "\n\n" + props.ttlMinutes() + "분 이내에 입력해주세요.");
+        msg.setSubject(SUBJECT);
+        msg.setText(buildBody(code));
         mailSender.send(msg);
+    }
+
+    private String buildBody(String code) {
+        return "인증번호: " + code + "\n\n" + props.ttlMinutes() + "분 이내에 입력해주세요.";
     }
 }

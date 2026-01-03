@@ -5,12 +5,15 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.kyonggi.backend.auth.config.OtpProperties;
 import com.kyonggi.backend.auth.domain.EmailOtp;
 import com.kyonggi.backend.auth.domain.OtpPurpose;
+import com.kyonggi.backend.auth.identity.signup.event.SignupOtpIssuedEvent;
 import com.kyonggi.backend.auth.identity.signup.support.KyonggiEmailUtils;
 import com.kyonggi.backend.auth.identity.signup.support.OtpCodeGenerator;
 import com.kyonggi.backend.auth.identity.signup.support.OtpHasher;
@@ -20,15 +23,6 @@ import com.kyonggi.backend.global.ErrorCode;
 
 import lombok.RequiredArgsConstructor;
 
-/**
- * 회원가입 OTP 유스케이스
- *
- * 설계 포인트
- * - (email, purpose) 당 OTP 1개(유니크)만 유지
- * - 재요청: 쿨다운 / 일일 제한 / 이미 검증된 상태면 막기
- * - 검증 실패 시 failedAttempts 증가를 DB에 "반드시" 남겨야 하므로
- *   OtpInvalidException만 noRollbackFor로 커밋되게 처리
- */
 @Service
 @RequiredArgsConstructor
 public class SignupOtpService {
@@ -36,7 +30,7 @@ public class SignupOtpService {
     private static final OtpPurpose PURPOSE = OtpPurpose.SIGNUP;
 
     private final EmailOtpRepository emailOtpRepository;
-    private final SignupMailSender mailSender;
+    private final ApplicationEventPublisher eventPublisher; // 메일 발송을 "커밋 이후"로 보내기 위한 이벤트 발행자
 
     private final OtpCodeGenerator otpCodeGenerator;
     private final OtpHasher otpHasher;
@@ -45,40 +39,39 @@ public class SignupOtpService {
 
     @Transactional
     public void requestSignupOtp(String rawEmail) {
-        // 유틸에서 normalize + domain validation 안전하게
-        KyonggiEmailUtils.validateKyonggiDomain(rawEmail);
-        String email = KyonggiEmailUtils.normalize(rawEmail);
+        // 발송된 이메일 검증 및 정규화
+        String email = normalizeKyonggiEmail(rawEmail);
 
         LocalDateTime now = LocalDateTime.now(clock);
         LocalDate today = now.toLocalDate();
 
-        EmailOtp otp = emailOtpRepository.findByEmailAndPurpose(email, PURPOSE).orElse(null);
+        // ✅ 락 조회: 동시 요청이 정책을 뚫지 못하게 한다.
+        EmailOtp otp = emailOtpRepository.findByEmailAndPurposeForUpdate(email, PURPOSE).orElse(null);
 
         if (otp != null) {
-            // 1) 이미 검증 + 미만료면 “재요청” 막고 complete 유도
+            // 이미 검증 + 미만료면 재요청 막음
             if (otp.isVerified() && !otp.isExpired(now)) {
                 throw new ApiException(ErrorCode.OTP_ALREADY_VERIFIED);
             }
 
-            // 2) 쿨다운
+            // 일일 제한
+            int currentCount = otp.getSendCountDate().equals(today) ? otp.getSendCount() : 0;
+            if (currentCount >= props.dailySendLimit()) {
+                throw new ApiException(ErrorCode.OTP_DAILY_LIMIT);
+            }
+
+            // 쿨다운
             if (otp.getResendAvailableAt().isAfter(now)) {
                 long retry = Duration.between(now, otp.getResendAvailableAt()).getSeconds();
                 throw new ApiException(
                         ErrorCode.OTP_COOLDOWN,
                         ErrorCode.OTP_COOLDOWN.defaultMessage(),
                         (int) Math.max(retry, 1),
-                        null
-                );
-            }
-
-            // 3) 일일 제한
-            int currentCount = otp.getSendCountDate().equals(today) ? otp.getSendCount() : 0;
-            if (currentCount >= props.dailySendLimit()) {
-                throw new ApiException(ErrorCode.OTP_DAILY_LIMIT);
+                        null);
             }
         }
 
-        // 새 OTP 생성(원문은 메일로만 보내고, DB엔 해시만 저장)
+        // 새 OTP 생성 (DB에는 해시만)
         String code = otpCodeGenerator.generate6Digits();
         String codeHash = otpHasher.hash(code);
 
@@ -89,23 +82,41 @@ public class SignupOtpService {
                 ? EmailOtp.create(email, codeHash, PURPOSE, expiresAt, now, today, resendAvailableAt)
                 : reissueAndReturn(otp, codeHash, expiresAt, now, today, resendAvailableAt);
 
-        emailOtpRepository.save(toSave);
-        mailSender.sendOtp(email, code);
+        try {
+            emailOtpRepository.save(toSave);
+        } catch (DataIntegrityViolationException e) {
+            // 누가 먼저 만들었음 → 다시 락 조회해서 정책대로 처리
+            EmailOtp existing = emailOtpRepository.findByEmailAndPurposeForUpdate(email, PURPOSE)
+                    .orElseThrow(() -> e);
+
+            // existing 기준으로 쿨다운/일일제한 재검사 후 OTP_COOLDOWN 등 던지기
+            LocalDateTime retryAt = existing.getResendAvailableAt();
+            long retry = Duration.between(now, retryAt).getSeconds();
+            throw new ApiException(
+                    ErrorCode.OTP_COOLDOWN,
+                    ErrorCode.OTP_COOLDOWN.defaultMessage(),
+                    (int) Math.max(retry, 1),
+                    null);
+        }
+
+        /**
+         * 여기서 메일을 직접 보내지 않음.
+         * 트랜잭션 커밋이 끝난 후(AFTER_COMMIT) 리스너가 메일을 보낸다.
+         */
+        eventPublisher.publishEvent(new SignupOtpIssuedEvent(email, code));
     }
 
     @Transactional(noRollbackFor = OtpInvalidException.class)
     public void verifySignupOtp(String rawEmail, String incomingCode) {
-        KyonggiEmailUtils.validateKyonggiDomain(rawEmail);
-        String email = KyonggiEmailUtils.normalize(rawEmail);
-
+        String email = normalizeKyonggiEmail(rawEmail);
         LocalDateTime now = LocalDateTime.now(clock);
 
-        EmailOtp otpEntity = emailOtpRepository.findByEmailAndPurpose(email, PURPOSE)
+        // ✅ 락 조회: 실패횟수 증가/verified 처리에서 레이스 방지
+        EmailOtp otpEntity = emailOtpRepository.findByEmailAndPurposeForUpdate(email, PURPOSE)
                 .orElseThrow(() -> new ApiException(ErrorCode.OTP_NOT_FOUND));
 
-        // 이미 인증된 상태면 멱등 처리(idempotent)로 그냥 성공 처리
         if (otpEntity.isVerified()) {
-            return;
+            return; // 멱등
         }
 
         if (otpEntity.isExpired(now)) {
@@ -118,14 +129,15 @@ public class SignupOtpService {
 
         // 불일치: 실패 횟수 증가 후 예외 (noRollbackFor로 커밋 보장)
         if (!otpHasher.matches(incomingCode, otpEntity.getCodeHash())) {
-            otpEntity.increaseFailure();
-            emailOtpRepository.save(otpEntity);
-            throw new OtpInvalidException();
+            otpEntity.increaseFailure();     // JPA의 더티체킹 기능으로, 커밋 시 emailOtpRepository 반영
+            throw new OtpInvalidException(); // 예외 던져도 noRollbackFor라 커밋됨 (정책상 실패 횟수를 반드시 남김)
         }
 
-        // 일치: verified_at 마킹 후 저장
+        /**
+         * 일치: verified_at 마킹 후 저장
+         * JPA의 더티체킹 기능으로, 커밋 시 emailOtpRepository 반영
+         */
         otpEntity.markVerified(now);
-        emailOtpRepository.save(otpEntity);
     }
 
     private EmailOtp reissueAndReturn(
@@ -134,8 +146,7 @@ public class SignupOtpService {
             LocalDateTime expiresAt,
             LocalDateTime now,
             LocalDate today,
-            LocalDateTime resendAvailableAt
-    ) {
+            LocalDateTime resendAvailableAt) {
         otpEntity.reissue(codeHash, expiresAt, now, today, resendAvailableAt);
         return otpEntity;
     }
@@ -144,5 +155,10 @@ public class SignupOtpService {
         public OtpInvalidException() {
             super(ErrorCode.OTP_INVALID);
         }
+    }
+
+    private String normalizeKyonggiEmail(String rawEmail) {
+        KyonggiEmailUtils.validateKyonggiDomain(rawEmail);
+        return KyonggiEmailUtils.normalize(rawEmail);
     }
 }

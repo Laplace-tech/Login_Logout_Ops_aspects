@@ -5,15 +5,14 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * [signup.dto 패키지의 역할]
+ * [DTO의 역할]
+ * - Controller가 요청 JSON을 받을 때 매핑되는 입력 전용 객체로,
+ *   비즈니스 로직 없이 주로 1차 입력 검증(@Valid) 역할
  * 
- * DTO(Data Transfer Object) 개념
- * 
- * - Client ↔ Controller 간 "요청 데이터 전용 객체"
- * - 비즈니스 로직 없음
- * - 검증(@Valid, @NotBlank 등)만 담당
+ * 컨트롤러에서 보통 이렇게 사용됨:
+ *  @PostMapping("/auth/signup/complete")
+ *  public ResponseEntity<?> complete(@Valid @RequestBody SignupCompleteRequest req) { ... }
  */
-
 public record SignupCompleteRequest(
         @NotBlank(message = "이메일은 필수입니다.")
         @Email(message = "이메일 형식이 올바르지 않습니다.")
@@ -31,5 +30,4 @@ public record SignupCompleteRequest(
         @Size(max = 50, message = "닉네임이 너무 깁니다.")
         String nickname
         ) {
-
 }

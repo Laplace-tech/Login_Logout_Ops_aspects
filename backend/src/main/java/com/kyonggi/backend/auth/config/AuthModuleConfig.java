@@ -17,7 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * 
  * @EnableConfigurationProperties
  *  - @ConfigurationProperties가 붙은 클래스들을 스프링이 자동으로 바인딩 + 검증하도록 활성화
- *  - 여기서는: { OtpProperties, AuthProperties }
+ *  - 여기서는: {OtpProperties, AuthProperties}
  */
 @Configuration
 @EnableConfigurationProperties({
