@@ -9,7 +9,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
-
+ 
 import com.kyonggi.backend.global.ErrorCode;
 
 import jakarta.servlet.FilterChain;
@@ -19,16 +19,16 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Security Filter Chain에서 동작하는 JWT 인증 필터
+ * "Security Filter Chain"에서 "JWT 기반 인증"을 수행하는 인증 필터
  * 
- * - Authorization: Bearer <token> 헤더가 있으면 토큰을 꺼낸다. (Access Token(JWT))
- * - JwtService로 검증해서 AuthPrincipal(userId, role)을 얻는다.
- * - Spring Security가 이해할 수 있는 Authentication 객체를 만들어 SecurityContext에 넣는다.
- * - 다음 필터/컨트롤러로 흐름을 넘긴다.
+ * 역할:
+ * - 모든 요청에서 "Authorization: Bearer <token>" 헤더가 있으면 Access Token을 꺼낸다.
+ * - JwtService로 JWT 서명/만료/issuer를 검증해서 AuthPrincipal(userId, role)을 얻는다.
+ * - 검증이 성공하면 SecurityContext에 Authentication을 세팅한다.
  * 
- * 주의:
- * - "토큰이 없는 요청"은 여기서 막지 않는다. (실제로 막는 건 SecurityConfig의 authorize 규칙과 EntryPoint가 담당)
- * - "토큰이 있는데 invalid"면 여기서 401 Unauthorized를 직접 내려준다.
+ * 중요한 분리:
+ * - "토큰이 없음" → 여기서 막지 않는다. 그냥 다음으로 넘김. (실제 차단은 SecurityConfig의 authorize 규칙 + EntryPoint가 담당)
+ * - "토큰이 있는데 invalid" → 여기서 401 JSON 응답을 직접 내려준다.
  */
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -38,7 +38,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final SecurityErrorWriter errorWriter;
 
-    @SuppressWarnings("null")
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -46,67 +45,69 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        // 이미 앞단에서 인증이 되어 있으면 그냥 패스
+        // 이미 인증이 세팅되어 있으면(다른 필터/체인에서) 중복 인증 안 함
         if (SecurityContextHolder.getContext().getAuthentication() != null) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // "Authorization: Bearer <token>" 여기에서 리프레쉬 토큰 원문을 추출
+        /**
+         * @DisplayName("me: Authorization 없음 → 401 AUTH_REQUIRED (EntryPoint)")
+         * @DisplayName("me: Bearer가 아닌 Authorization → 401 AUTH_REQUIRED (EntryPoint)")
+         * @DisplayName("me: Authorization='Bearer ' (토큰 공백) → 401 AUTH_REQUIRED (EntryPoint)")
+         */
+        // Authorization: Bearer <ACCESS_JWT> 에서 Access Token(JWT) 추출
         String token = resolveToken(request);
         if (token == null) {
-            // Authorization 헤더 없거나 Bearer 형식이 아니면, 이 필터는 그냥 넘김
+            // 토큰이 없으면 그냥 통과. (보호 리소스 차단은 EntryPoint/authorize에서)
             filterChain.doFilter(request, response);
             return;
         }
 
         try {
+            /**
+             * throw new InvalidJwtException("Invalid JWT", e)
+             *  @DisplayName("me: 형식/서명/issuer/만료 등 검증 실패 JWT → 401 ACCESS_INVALID (Filter)")
+             *  @DisplayName("me: refresh 토큰 문자열을 access처럼 사용 → 401 ACCESS_INVALID (Filter)")
+             */
             // JWT 검증 → JwtParser로 토큰을 복원하여 AuthPrincipal를 만들어 반환 
             AuthPrincipal principal = jwtService.verifyAccessToken(token);
 
-            // Spring Security 권한 모델로 변환 (ROLE_ 접두사 관례)
-            String roleName = principal.role().startsWith("ROLE_")
-                ? principal.role()
-                : "ROLE_" + principal.role();
-
             // 권한(ROLE_*) 세팅: ROLE_USER
-            var authorities = List.of(new SimpleGrantedAuthority(roleName));
+            var authorities = List.of(new SimpleGrantedAuthority(principal.authority()));
 
-            // 3) UsernamePasswordAuthenticationToken 생성해서 SecurityContext에 주입
+            // Spring Security가 이해하는 Authentication 생성
             var authentication = new UsernamePasswordAuthenticationToken(
                     principal,
                     null,
                     authorities
             );
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+            // SecurityContext에 인증 정보 저장
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
-            // 4) 나머지 필터/컨트롤러로 계속 진행
+            // 다음 필터/컨트롤러로 진행
             filterChain.doFilter(request, response);
-
         } catch (JwtService.InvalidJwtException ex) {
-            /**
-             * invalid token일 때 내려줄 401 JSON 응답.
-             * EntryPoint는 “토큰 자체가 없어서 인증 실패”일 때 쓰고,
-             * 여기서는 “토큰이 있는데 invalid”일 때 쓴다.
-             */
+            // 토큰이 "있는데" invalid라면 여기서 401 JSON으로 끝낸다.
             SecurityContextHolder.clearContext();
-            errorWriter.write(response, ErrorCode.ACCESS_INVALID); // ApiError.of(errorCode.name(), errorCode.defaultMessage());
+            errorWriter.write(response, ErrorCode.ACCESS_INVALID); // 내부에서: write(response, errorCode, errorCode.defaultMessage()); 호출
         }
     }
 
     /**
-     * Authorization 헤더에서 Bearer 토큰만 뽑아내는 헬퍼.
-     * 없거나 형식이 다르면 null 리턴.
+     * "Authorization: Bearer <token>" 헤더에서 <token>만 뽑아내는 헬퍼.
+     * - 없거나 형식이 다르면 null 리턴.
      */
     private String resolveToken(HttpServletRequest request) {
-        String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+        String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION); // Bearer <token>
         if(authHeader == null || authHeader.isBlank()) 
             return null;
         if(!authHeader.startsWith(BEARER_PREFIX)) 
             return null;
 
-        String token = authHeader.substring(BEARER_PREFIX.length()).trim();
+        String token = authHeader.substring(BEARER_PREFIX.length()).trim(); // <token>
         return token.isBlank() ? null : token;
     }
 

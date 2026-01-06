@@ -6,16 +6,12 @@ server:
       force: true
 
 spring:
-
-  mail:
-    host: localhost
-    port: 1025
-
   datasource:
     hikari:
       maximum-pool-size: 4
       minimum-idle: 1
-      connection-timeout: 3000
+      # connection-timeout 등 DB 연결 관련 핵심 값은
+      # AbstractIntegrationTest.@DynamicPropertySource에서 컨테이너 값으로 최종 덮어씀
 
   jpa:
     open-in-view: false
@@ -32,13 +28,6 @@ spring:
     clean-disabled: true
 
 app:
-  otp:
-    ttl-minutes: 10
-    max-failures: 5
-    resend-cooldown-seconds: 60
-    daily-send-limit: 10
-    hmac-secret: "test-otp-hmac-secret-change-me-1234567890"
-
   auth:
     jwt:
       issuer: "kyonggi-board-test"
@@ -51,3 +40,9 @@ app:
       cookie-secure: false
       remember-me-seconds: 604800
       session-ttl-seconds: 86400
+  otp:
+    ttl-minutes: 10 
+    max-failures: 5
+    resend-cooldown-seconds: 20
+    daily-send-limit: 3
+    hmac-secret: "local-dev-otp-secret-change-me-32-bytes-min" 

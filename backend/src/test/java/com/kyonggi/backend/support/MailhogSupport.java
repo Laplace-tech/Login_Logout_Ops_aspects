@@ -1,11 +1,15 @@
 package com.kyonggi.backend.support;
 
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -20,7 +24,19 @@ public final class MailhogSupport {
 
     private static final ObjectMapper om = new ObjectMapper();
     private static final HttpClient http = HttpClient.newHttpClient();
+
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(3);
+    private static final long POLL_INTERVAL_MS = 200;
+
     private static final Pattern OTP_6 = Pattern.compile("\\b(\\d{6})\\b");
+
+    // =?UTF-8?B?...?= / =?UTF-8?Q?...?=
+    private static final Pattern MIME_WORD =
+            Pattern.compile("=\\?([^?]+)\\?([bBqQ])\\?([^?]+)\\?=");
+
+    // base64-ish (MailHog가 body를 base64로 주는 케이스가 있음)
+    private static final Pattern BASE64ISH =
+            Pattern.compile("^[A-Za-z0-9+/\\r\\n=]+$");
 
     /** ✅ Testcontainers 매핑 포트 기반 MailHog base URL */
     private static String baseUrl() {
@@ -32,7 +48,7 @@ public final class MailhogSupport {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl() + "/api/v1/messages"))
                 .DELETE()
-                .timeout(Duration.ofSeconds(3))
+                .timeout(HTTP_TIMEOUT)
                 .build();
 
         http.send(req, HttpResponse.BodyHandlers.discarding());
@@ -46,7 +62,7 @@ public final class MailhogSupport {
         while (System.nanoTime() < deadline) {
             HttpResponse<String> res = fetchV2Messages();
             if (res.statusCode() / 100 != 2) {
-                Thread.sleep(200);
+                Thread.sleep(POLL_INTERVAL_MS);
                 continue;
             }
 
@@ -56,7 +72,7 @@ public final class MailhogSupport {
             String otp = tryFindOtpFromRoot(root, toEmail);
             if (otp != null) return otp;
 
-            Thread.sleep(200);
+            Thread.sleep(POLL_INTERVAL_MS);
         }
 
         throw new AssertionError(
@@ -70,7 +86,7 @@ public final class MailhogSupport {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl() + "/api/v2/messages?limit=50"))
                 .GET()
-                .timeout(Duration.ofSeconds(3))
+                .timeout(HTTP_TIMEOUT)
                 .build();
 
         return http.send(req, HttpResponse.BodyHandlers.ofString());
@@ -81,13 +97,14 @@ public final class MailhogSupport {
         if (items == null || !items.isArray()) return null;
 
         for (JsonNode item : items) {
-            // ✅ 1) 수신자 필터: MailHog v2는 top-level "To"가 envelope 수신자임
             if (!recipientMatches(item, toEmail)) continue;
 
-            // ✅ 2) subject + body + mime parts에서 OTP 탐색
-            String subject = headerFirst(item, "Subject");
-            String contentBody = safeText(item.at("/Content/Body"));
-            String mimeBodies = collectMimeBodies(item);
+            String subjectRaw = headerFirst(item, "Subject");
+            String subject = decodeAll(subjectRaw);
+
+            // MailHog v2: Content.Body / MIME.Parts[].Body 가 base64(또는 QP)인 케이스가 있음
+            String contentBody = decodeAll(safeText(item.at("/Content/Body")));
+            String mimeBodies = decodeAll(collectMimeBodies(item));
 
             String haystack = (subject == null ? "" : subject) + "\n"
                     + (contentBody == null ? "" : contentBody) + "\n"
@@ -112,24 +129,22 @@ public final class MailhogSupport {
                 String addr = mailboxDomain(r);
                 if (addr != null && addr.toLowerCase(Locale.ROOT).contains(target)) return true;
             }
-            // To 정보가 "있는데" 매칭 실패면 확실히 다른 수신자 메일이므로 스킵
-            return false;
+            return false; // To가 있는데 매칭 실패면 다른 수신자 메일
         }
 
-        // (2) fallback: Content.Headers.To / Cc (BCC는 원래 헤더에 안 들어가는 경우 많음)
+        // (2) fallback: Content.Headers.To / Cc
         JsonNode headers = item.at("/Content/Headers");
         if (headers != null && !headers.isMissingNode()) {
             if (containsInHeader(headers.get("To"), target)) return true;
             if (containsInHeader(headers.get("Cc"), target)) return true;
 
-            // Headers.To가 "undisclosed" 같은 경우는 신뢰 못 하니 필터링 포기
             String toText = flattenHeader(headers.get("To"));
             if (toText != null && toText.toLowerCase(Locale.ROOT).contains("undisclosed")) {
                 return true;
             }
         }
 
-        // (3) 수신자 정보가 애매하면(=BCC/특이 케이스) 필터링하지 말고 통과
+        // (3) 애매하면 통과
         return true;
     }
 
@@ -180,7 +195,7 @@ public final class MailhogSupport {
         return safeText(node);
     }
 
-    /** multipart 대비: /MIME/Parts[].Body 전부 긁어서 합치기 */
+    /** multipart 대비: /MIME/Parts[].Body 전부 긁어서 합치기 (2-depth까지 방어) */
     private static String collectMimeBodies(JsonNode item) {
         JsonNode parts = item.at("/MIME/Parts");
         if (parts == null || parts.isMissingNode() || !parts.isArray() || parts.size() == 0) return "";
@@ -190,7 +205,6 @@ public final class MailhogSupport {
             String b = safeText(p.get("Body"));
             if (b != null && !b.isBlank()) bodies.add(b);
 
-            // 혹시 depth가 더 들어가는 구조도 방어
             JsonNode innerParts = p.at("/MIME/Parts");
             if (innerParts != null && innerParts.isArray()) {
                 for (JsonNode ip : innerParts) {
@@ -199,7 +213,6 @@ public final class MailhogSupport {
                 }
             }
         }
-
         return String.join("\n", bodies);
     }
 
@@ -213,6 +226,153 @@ public final class MailhogSupport {
         return (node == null || node.isMissingNode() || node.isNull()) ? null : node.asText("");
     }
 
+    /** ===== 디코딩 파이프라인: MIME-word -> base64 -> quoted-printable(문자열) ===== */
+    private static String decodeAll(String s) {
+        if (s == null || s.isBlank()) return s;
+
+        String out = s;
+
+        // 1) MIME encoded-word (Subject에서 자주 나옴)
+        out = decodeMimeEncodedWords(out);
+
+        // 2) body가 base64로 통째로 오는 케이스 디코드 (너 로그에 bodyPreview가 딱 이 케이스였음)
+        out = maybeDecodeBase64ToText(out);
+
+        // 3) quoted-printable 흔한 형태 디코드
+        out = decodeQuotedPrintableText(out);
+
+        return out;
+    }
+
+    private static String decodeMimeEncodedWords(String s) {
+        Matcher m = MIME_WORD.matcher(s);
+        StringBuffer sb = new StringBuffer();
+
+        while (m.find()) {
+            String charsetName = m.group(1);
+            String enc = m.group(2);
+            String payload = m.group(3);
+
+            Charset cs;
+            try {
+                cs = Charset.forName(charsetName);
+            } catch (Exception e) {
+                cs = StandardCharsets.UTF_8;
+            }
+
+            String decoded = m.group(0);
+            try {
+                if (enc.equalsIgnoreCase("B")) {
+                    byte[] bytes = Base64.getDecoder().decode(payload);
+                    decoded = new String(bytes, cs);
+                } else { // Q
+                    decoded = decodeMimeQ(payload, cs);
+                }
+            } catch (Exception ignore) {
+                // 실패하면 원본 유지
+            }
+
+            m.appendReplacement(sb, Matcher.quoteReplacement(decoded));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String decodeMimeQ(String payload, Charset cs) {
+        // RFC 2047 Q-encoding: '_' -> ' ', '=HH' hex
+        String q = payload.replace('_', ' ');
+        byte[] bytes = decodeQuotedPrintableBytes(q);
+        return new String(bytes, cs);
+    }
+
+    private static String maybeDecodeBase64ToText(String s) {
+        String trimmed = s.trim();
+
+        // 너무 짧으면 base64일 확률 낮음
+        if (trimmed.length() < 16) return s;
+
+        // MIME-word 자체는 여기서 또 디코드하지 않도록
+        if (trimmed.contains("=?") && trimmed.contains("?=")) return s;
+
+        // base64 char셋만으로 구성되어 있으면 시도
+        if (!BASE64ISH.matcher(trimmed).matches()) return s;
+
+        try {
+            byte[] decoded = Base64.getMimeDecoder().decode(trimmed);
+            String asUtf8 = new String(decoded, StandardCharsets.UTF_8);
+
+            // “진짜 텍스트”로 보이면 교체
+            if (looksLikeText(asUtf8)) return asUtf8;
+
+            // UTF-8 아니면 ISO-8859-1도 한 번
+            String asLatin1 = new String(decoded, StandardCharsets.ISO_8859_1);
+            if (looksLikeText(asLatin1)) return asLatin1;
+
+        } catch (Exception ignore) {
+            // not base64
+        }
+        return s;
+    }
+
+    private static boolean looksLikeText(String s) {
+        if (s == null || s.isBlank()) return false;
+
+        int len = s.length();
+        int bad = 0;
+        for (int i = 0; i < len; i++) {
+            char c = s.charAt(i);
+            // 허용: 일반문자, 공백류, 개행/탭
+            if (c == '\r' || c == '\n' || c == '\t') continue;
+            if (c < 0x20) bad++;
+        }
+        // 제어문자가 너무 많으면 “텍스트”가 아님
+        return bad <= Math.max(2, len / 50);
+    }
+
+    private static String decodeQuotedPrintableText(String s) {
+        // 너무 공격적으로 하면 base64나 다른 포맷까지 망가질 수 있어서,
+        // "=HH"가 어느 정도 있는 경우만 디코드 시도
+        if (s.indexOf('=') < 0) return s;
+
+        try {
+            byte[] bytes = decodeQuotedPrintableBytes(s);
+            String out = new String(bytes, StandardCharsets.UTF_8);
+            // 디코드 결과가 텍스트 같으면 교체
+            return looksLikeText(out) ? out : s;
+        } catch (Exception ignore) {
+            return s;
+        }
+    }
+
+    private static byte[] decodeQuotedPrintableBytes(String s) {
+        // soft line break "=\\r\\n" 제거
+        String in = s.replace("=\r\n", "").replace("=\n", "");
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(in.length());
+        for (int i = 0; i < in.length(); i++) {
+            char c = in.charAt(i);
+            if (c == '=' && i + 2 < in.length()) {
+                int hi = hex(in.charAt(i + 1));
+                int lo = hex(in.charAt(i + 2));
+                if (hi >= 0 && lo >= 0) {
+                    baos.write((hi << 4) + lo);
+                    i += 2;
+                    continue;
+                }
+            }
+            baos.write((byte) c);
+        }
+        return baos.toByteArray();
+    }
+
+    private static int hex(char c) {
+        if ('0' <= c && c <= '9') return c - '0';
+        if ('a' <= c && c <= 'f') return 10 + (c - 'a');
+        if ('A' <= c && c <= 'F') return 10 + (c - 'A');
+        return -1;
+    }
+
+    /** ===== 디버그 ===== */
     private static String summarize(JsonNode root) {
         if (root == null) return "null";
 
@@ -225,8 +385,15 @@ public final class MailhogSupport {
 
         for (int i = 0; i < n; i++) {
             JsonNode item = items.get(i);
-            String subject = headerFirst(item, "Subject");
-            sb.append("- subject=").append(subject).append(", to=").append(recipientsToString(item)).append("\n");
+            String subject = decodeAll(headerFirst(item, "Subject"));
+            String body = decodeAll(safeText(item.at("/Content/Body")));
+            String preview = body == null ? "" : body.replace("\r", "").replace("\n", " ");
+            if (preview.length() > 120) preview = preview.substring(0, 120) + "...";
+
+            sb.append("- subject=").append(subject)
+              .append(", to=").append(recipientsToString(item))
+              .append(", bodyPreview=").append(preview)
+              .append("\n");
         }
         return sb.toString();
     }

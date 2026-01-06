@@ -3,12 +3,14 @@ package com.kyonggi.backend.auth.refresh;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.kyonggi.backend.auth.AbstractAuthIntegrationTest;
+import com.kyonggi.backend.auth.config.AuthProperties;
 import com.kyonggi.backend.auth.token.domain.RefreshRevokeReason;
 import com.kyonggi.backend.auth.token.domain.RefreshToken;
 import com.kyonggi.backend.auth.token.support.TokenHashUtils;
@@ -26,79 +28,91 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired TokenHashUtils tokenHashUtils;
+    @Autowired AuthProperties authProps;
 
-    @Test 
-    @DisplayName("로그인: refresh 쿠키 발급 + DB에는 refresh 해시 저장(세션 쿠키 정책)")
-    void login_saves_refreshToken_hash_in_db_and_sets_cookie() throws Exception {
-        //로그인 (rememberMe=false => 세션 쿠키 기대)
-        LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
- 
-        // 응답에서 accessToken, refreshRaw 둘 다 있어야 함
-        assertThat(login.refreshRaw()).isNotBlank();
-        assertThat(login.accessToken()).isNotBlank();
-
-        // DB에는 refresh 원문이 아니라 "hash"가 저장되어야 함 (보안상 원문 저장 금지)
-        String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
-        Optional<RefreshToken> saved = refreshTokenRepository.findByTokenHash(hash);
-
-        assertThat(saved).isPresent();     
-        assertThat(saved.get().isRevoked()).isFalse(); // 아직 폐기되지 않은 토큰이어야 함
-        assertThat(saved.get().isRememberMe()).isFalse(); // rememberMe=false로 저장돼야 함
-
-        // setCookieLine = "KG_REFRESH=aaa.bbb.ccc; Path=/auth; HttpOnly; SameSite=Lax"
-        String setCookieLine = AuthHttpSupport.findSetCookieLine(login.setCookieHeaders(), AuthHttpSupport.REFRESH_COOKIE);
-       
-        // Set-Cookie 정책 검사 (세션 쿠키라 Max-Age가 없어야 함)
-        AuthHttpSupport.assertRefreshCookiePolicy(setCookieLine, false);
+    @BeforeEach
+    void seedUser() {
+        createDefaultUser();
     }
 
     @Test
-    @DisplayName("로그인(rememberMe): persistent refresh 쿠키(Max-Age) + DB rememberMe=true 저장")
-    void login_with_rememberMe_sets_persistent_cookie_and_db_flag() throws Exception {
-        // rememberMe=true 로그인
+    @DisplayName("로그인: refresh 쿠키 발급 + DB에는 refresh 해시 저장(rememberMe=false)")
+    void login_saves_refresh_hash_in_db_rememberMe_false() throws Exception {
+        LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
+
+        // 응답에 access token, refresh token 있어야 함
+        assertThat(login.accessToken()).isNotBlank();
+        assertThat(login.refreshRaw()).isNotBlank();
+
+        // DB에는 raw가 아니라 hash로 저장되어야 함
+        String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
+        Optional<RefreshToken> saved = refreshTokenRepository.findByTokenHash(hash);
+
+        // 리프레쉬 토큰이 DB에 있어야 함 (NOT REVOKED, rememberMe: false)
+        assertThat(saved).isPresent();
+        assertThat(saved.get().isRevoked()).isFalse();
+        assertThat(saved.get().isRememberMe()).isFalse();
+
+        // 쿠키 TTL(Max-Age)은 rememberMe=false -> sessionTtlSeconds
+        String setCookieLine = AuthHttpSupport.findSetCookieLine(login.setCookieHeaders(), AuthHttpSupport.REFRESH_COOKIE);
+        long maxAge = extractMaxAgeSeconds(setCookieLine);
+
+        assertThat(maxAge)
+                .as("rememberMe=false 쿠키는 Max-Age가 sessionTtlSeconds와 같아야 함. set-cookie=%s", setCookieLine)
+                .isEqualTo(authProps.refresh().sessionTtlSeconds());
+    }
+
+    @Test
+    @DisplayName("로그인: refresh 쿠키 발급 + DB rememberMe=true 저장(rememberMe=true)")
+    void login_saves_refresh_hash_in_db_rememberMe_true() throws Exception {
         LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, true);
 
-        // 쿠키 정책은 persistent여야 하므로 Max-Age가 있어야 함
-        String setCookieLine = AuthHttpSupport.findSetCookieLine(login.setCookieHeaders(), AuthHttpSupport.REFRESH_COOKIE);
-        AuthHttpSupport.assertRefreshCookiePolicy(setCookieLine, true);
+        assertThat(login.accessToken()).isNotBlank();
+        assertThat(login.refreshRaw()).isNotBlank();
 
-        // DB에도 rememberMe 플래그가 true로 저장되어야 함
         String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
         Optional<RefreshToken> saved = refreshTokenRepository.findByTokenHash(hash);
 
         assertThat(saved).isPresent();
-        assertThat(saved.get().isRememberMe()).isTrue();
         assertThat(saved.get().isRevoked()).isFalse();
+        assertThat(saved.get().isRememberMe()).isTrue();
+
+        // rememberMe=true -> rememberMeSeconds
+        String setCookieLine = AuthHttpSupport.findSetCookieLine(login.setCookieHeaders(), AuthHttpSupport.REFRESH_COOKIE);
+        long maxAge = extractMaxAgeSeconds(setCookieLine);
+
+        assertThat(maxAge)
+                .as("rememberMe=true 쿠키는 Max-Age가 rememberMeSeconds와 같아야 함. set-cookie=%s", setCookieLine)
+                .isEqualTo(authProps.refresh().rememberMeSeconds());
     }
 
     @Test
-    @DisplayName("리프레시: 토큰 로테이션 수행(새 refresh 발급) + 기존 refresh ROTATED로 폐기")
-    void refresh_rotates_token_and_revokes_old() throws Exception {
-        // 로그인해서 old refresh를 얻는다
+    @DisplayName("리프레시: 정상 로테이션(새 refresh 발급) + 기존 refresh ROTATED로 폐기 + 새 row는 revoked=false")
+    void refresh_rotates_and_revokes_old() throws Exception {
         LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
         String oldRaw = login.refreshRaw();
-        
-        // old refresh 해시(=DB에 저장된 키) & DB에 토큰 존재 유무 확인
+
         String oldHash = tokenHashUtils.sha256Hex(oldRaw);
         assertThat(refreshTokenRepository.findByTokenHash(oldHash)).isPresent();
 
-        // POST: /auth/refresh 호출 (쿠키에 old refresh를 담아 보냄) -> refresh 토큰 새로 발급
+        // refresh 호출 -> 새 토큰
         RefreshResult refreshed = AuthFlowSupport.refreshOk(mvc, oldRaw);
         String newRaw = refreshed.refreshRaw();
 
+        assertThat(refreshed.accessToken()).isNotBlank();
         assertThat(newRaw).isNotBlank();
         assertThat(newRaw).isNotEqualTo(oldRaw);
 
-        // old 토큰은 revoked 처리되어야 한다. + reason=ROTATED
-        var oldRowAfter = refreshTokenRepository.findByTokenHash(oldHash);
+        // old는 ROTATED로 revoke
+        Optional<RefreshToken> oldRowAfter = refreshTokenRepository.findByTokenHash(oldHash);
         assertThat(oldRowAfter).isPresent();
         assertThat(oldRowAfter.get().isRevoked()).isTrue();
-        assertThat(oldRowAfter.get().getRevokeReason())
-            .isEqualTo(RefreshRevokeReason.ROTATED.name());
+        assertThat(oldRowAfter.get().getRevokeReason()).isEqualTo(RefreshRevokeReason.ROTATED);
 
-        // new 토큰은 DB에 저장되어 있고 revoked=false 이어야 한다
+        // new는 저장 + revoked=false
         String newHash = tokenHashUtils.sha256Hex(newRaw);
-        var newRow = refreshTokenRepository.findByTokenHash(newHash);
+        Optional<RefreshToken> newRow = refreshTokenRepository.findByTokenHash(newHash);
+
         assertThat(newRow).isPresent();
         assertThat(newRow.get().isRevoked()).isFalse();
     }
@@ -106,7 +120,6 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
     @Test
     @DisplayName("리프레시: 쿠키 없음 → 401 REFRESH_INVALID")
     void refresh_without_cookie_returns_refresh_invalid() throws Exception {
-        // 쿠키 없이 refresh 호출 => refresh 토큰이 없으므로 401 + REFRESH_INVALID
         AuthHttpSupport.expectErrorWithCode(
                 AuthHttpSupport.performRefresh(mvc, null),
                 ErrorCode.REFRESH_INVALID
@@ -115,51 +128,73 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
 
     @Test
     @DisplayName("리프레시: 미발급 refresh 토큰 → 401 REFRESH_INVALID")
-    void refresh_with_unknown_token_returns_refresh_invalid() throws Exception {
-        // 서버가 발급한 적 없는 refresh 토큰으로 호출 => 401 + REFRESH_INVALID
+    void refresh_unknown_token_returns_refresh_invalid() throws Exception {
+        Cookie cookie = new Cookie(AuthHttpSupport.REFRESH_COOKIE, "definitely-not-issued-by-server");
+
         AuthHttpSupport.expectErrorWithCode(
-                AuthHttpSupport.performRefresh(mvc, new Cookie(AuthHttpSupport.REFRESH_COOKIE, "definitely-not-issued-by-server")),
+                AuthHttpSupport.performRefresh(mvc, cookie),
                 ErrorCode.REFRESH_INVALID
         );
     }
 
     @Test
-    @DisplayName("리프레시: 로테이션 후 구 refresh 재사용 시도 → 401 REFRESH_REUSED")
-    void refresh_reusing_old_token_is_blocked() throws Exception {
-        // 로그인해서 old refresh 획득
-        var login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
+    @DisplayName("리프레시: 로테이션 후 구 refresh 재사용 → 401 REFRESH_REUSED")
+    void refresh_reuse_old_token_is_blocked() throws Exception {
+        LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
         String oldRaw = login.refreshRaw();
 
-        //첫 refresh는 성공해서 로테이션이 일어난다
+        // 1회 refresh로 로테이션 발생
         AuthFlowSupport.refreshOk(mvc, oldRaw);
-        
-        // old refresh를 재사용하면 차단되어야 함 (REFRESH_REUSED)
+
+        // old 재사용 -> REFRESH_REUSED
+        Cookie cookie = new Cookie(AuthHttpSupport.REFRESH_COOKIE, oldRaw);
         AuthHttpSupport.expectErrorWithCode(
-                AuthHttpSupport.performRefresh(mvc, new Cookie(AuthHttpSupport.REFRESH_COOKIE, oldRaw)),
+                AuthHttpSupport.performRefresh(mvc, cookie),
                 ErrorCode.REFRESH_REUSED
         );
     }
 
     @Test
-    @DisplayName("리프레시: 로테이션 후에도 rememberMe 정책 유지(Max-Age 유지 + DB 플래그 유지)")
+    @DisplayName("리프레시: 로테이션 후 rememberMe 정책 유지(쿠키 TTL + DB rememberMe 유지)")
     void refresh_rotation_preserves_rememberMe_policy() throws Exception {
-        // rememberMe=true로 로그인 => persistent 쿠키
-        var login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, true);
+        LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, true);
         String oldRaw = login.refreshRaw();
 
-        // POST: /auth/refresh 호출 -> new 토큰 발급
         RefreshResult refreshed = AuthFlowSupport.refreshOk(mvc, oldRaw);
 
-        // 새 refresh 쿠키도 persistent(Max-Age 유지)여야 함
-        String line = AuthHttpSupport.findSetCookieLine(refreshed.setCookieHeaders(), AuthHttpSupport.REFRESH_COOKIE);
-        AuthHttpSupport.assertRefreshCookiePolicy(line, true);
+        // 쿠키 TTL 유지(rememberMeSeconds)
+        String setCookieLine = AuthHttpSupport.findSetCookieLine(refreshed.setCookieHeaders(), AuthHttpSupport.REFRESH_COOKIE);
+        long maxAge = extractMaxAgeSeconds(setCookieLine);
 
-        // DB에도 rememberMe=true가 유지되어야 한다
+        assertThat(maxAge)
+                .as("rememberMe=true면 로테이션 후 새 쿠키도 rememberMeSeconds TTL이어야 함. set-cookie=%s", setCookieLine)
+                .isEqualTo(authProps.refresh().rememberMeSeconds());
+
+        // DB rememberMe 유지
         String newHash = tokenHashUtils.sha256Hex(refreshed.refreshRaw());
-        var newRow = refreshTokenRepository.findByTokenHash(newHash);
+        Optional<RefreshToken> newRow = refreshTokenRepository.findByTokenHash(newHash);
 
         assertThat(newRow).isPresent();
         assertThat(newRow.get().isRememberMe()).isTrue();
         assertThat(newRow.get().isRevoked()).isFalse();
+    }
+
+    // -----------------
+    // helper
+    // -----------------
+    private static long extractMaxAgeSeconds(String setCookieLine) {
+        // 예: "KG_REFRESH=...; Max-Age=86400; Path=/auth; HttpOnly; SameSite=Lax"
+        String lower = setCookieLine.toLowerCase();
+        int idx = lower.indexOf("max-age=");
+        if (idx < 0) return -1L;
+
+        int start = idx + "max-age=".length();
+        int end = start;
+        while (end < setCookieLine.length() && Character.isDigit(setCookieLine.charAt(end))) {
+            end++;
+        }
+        if (end == start) return -1L;
+
+        return Long.parseLong(setCookieLine.substring(start, end));
     }
 }

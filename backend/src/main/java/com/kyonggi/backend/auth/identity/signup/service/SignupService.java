@@ -2,7 +2,7 @@ package com.kyonggi.backend.auth.identity.signup.service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.regex.Pattern;
+import java.util.regex.Pattern;  
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -37,34 +37,42 @@ public class SignupService {
     @Transactional
     public void completeSignup(String rawEmail, String rawPassword, String rawPasswordConfirm, String nickname) {
         // 발송된 이메일 검증 및 정규화
-        String email = normalizeKyonggiEmail(rawEmail);
+        String email = normalizeKyonggiEmail(rawEmail); // @DisplayName("completeSignup: kyonggi 도메인 아니면 → 400 EMAIL_DOMAIN_NOT_ALLOWED")
         LocalDateTime now = LocalDateTime.now(clock);
 
+        /**
+         * @DisplayName("completeSignup: 비밀번호 불일치 → 400 PASSWORD_MISMATCH")
+         * @DisplayName("completeSignup: 약한 비밀번호 → 400 WEAK_PASSWORD")
+         * @DisplayName("completeSignup: 닉네임 형식 오류 → 400 INVALID_NICKNAME")
+         */
         // 비밀번호 일치 검사 & 서비스 정책 검증
         validatePassword(rawPassword, rawPasswordConfirm);
         String nick = normalizeAndValidateNickname(nickname);
 
+
+
         // ✅ OTP도 락 조회하면 “동시에 complete 두 번” 같은 케이스에서 조금 더 단단해짐(선택)
         // 해당 이메일이 OTP 레코드에 있는지 검사 -> 없으면 OTP 인증 필요
-        EmailOtp otp = emailOtpRepository.findByEmailAndPurposeForUpdate(email, OtpPurpose.SIGNUP)
+        EmailOtp otp = emailOtpRepository.findByEmailAndPurposeForUpdate(email, OtpPurpose.SIGNUP) // @DisplayName("completeSignup: OTP 없으면 → 400 OTP_NOT_FOUND")
                 .orElseThrow(() -> new ApiException(ErrorCode.OTP_NOT_FOUND));
-
 
         // OTP 인증 미완료
         if (!otp.isVerified()) 
-            throw new ApiException(ErrorCode.OTP_NOT_VERIFIED);
+            throw new ApiException(ErrorCode.OTP_NOT_VERIFIED); // @DisplayName("completeSignup: OTP verified=false → 400 OTP_NOT_VERIFIED (request만 하고 verify는 안함)")
 
         // OTP 인증 만료, 재인증 필요(reissue)
         if (otp.getExpiresAt().isBefore(now)) 
-            throw new ApiException(ErrorCode.OTP_EXPIRED);
+            throw new ApiException(ErrorCode.OTP_EXPIRED); // @DisplayName("completeSignup: OTP 만료 → 400 OTP_EXPIRED (verify 후 Clock 이동)")
+        
+
         
         // 이메일 중복성 검사
         if (userRepository.existsByEmail(email)) 
-            throw new ApiException(ErrorCode.EMAIL_ALREADY_EXISTS);
+            throw new ApiException(ErrorCode.EMAIL_ALREADY_EXISTS); // @DisplayName("completeSignup: 이메일 중복 → 400 EMAIL_ALREADY_EXISTS")
         
         // 닉네임 중복성 검사
         if (userRepository.existsByNickname(nick))
-            throw new ApiException(ErrorCode.NICKNAME_ALREADY_EXISTS);
+            throw new ApiException(ErrorCode.NICKNAME_ALREADY_EXISTS); // @DisplayName("completeSignup: 닉네임 중복 → 400 NICKNAME_ALREADY_EXISTS")
         
 
         String passwordHash = passwordEncoder.encode(rawPassword);
@@ -85,8 +93,9 @@ public class SignupService {
         }
 
         // 재사용 방지: OTP 레코드 제거
-        emailOtpRepository.delete(otp);
+        emailOtpRepository.delete(otp); // @DisplayName("completeSignup: 정상 → 2xx + user 생성 + otp 삭제 (실제 OTP 플로우)")
     }
+
 
     private String normalizeKyonggiEmail(String rawEmail) {
         KyonggiEmailUtils.validateKyonggiDomain(rawEmail);

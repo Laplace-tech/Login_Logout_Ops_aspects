@@ -8,6 +8,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
 import com.kyonggi.backend.auth.config.AuthProperties;
+import com.kyonggi.backend.auth.config.AuthProperties.Refresh;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,14 +35,14 @@ public class AuthCookieUtils {
     /** Refresh 쿠키 읽기 (없으면 null) */
     public String readRefreshCookie(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
-        if (cookies == null || cookies.length == 0) {
-            return null;
-        }
+        if (cookies == null || cookies.length == 0) return null;
 
-        String cookieName = props.refresh().cookieName(); // 설정 값 가져오기: KG_REFRESH
+        String cookieName = props.refresh().cookieName();
+
         return Arrays.stream(cookies)
                 .filter(c -> cookieName.equals(c.getName()))
                 .map(Cookie::getValue)
+                .map(v -> v == null ? null : v.trim())
                 .filter(v -> v != null && !v.isBlank())
                 .findFirst()
                 .orElse(null);
@@ -49,24 +50,28 @@ public class AuthCookieUtils {
 
     /**
      * Refresh 쿠키 세팅
-     * - rememberMe=true -> 지속 쿠키(Max-Age=rememberMeSeconds)
-     * - rememberMe=false -> 세션 쿠키(Max-Age 미설정)
+     * - rememberMe=true  -> 긴 TTL (Max-Age = rememberMeSeconds)
+     * - rememberMe=false -> 짧은 TTL (Max-Age = sessionTtlSeconds)
      */
     public void setRefreshCookie(HttpServletResponse response, String refreshRaw, boolean rememberMe) {
-        var refresh = props.refresh();
-        ResponseCookie.ResponseCookieBuilder b = baseRefreshCookie(refreshRaw);
-
-        if (rememberMe) {
-            // ✅ Duration로 고정 (단위 실수 방지)
-            b.maxAge(Duration.ofSeconds(refresh.rememberMeSeconds()));
+        if (refreshRaw == null || refreshRaw.isBlank()) {
+            // 값이 비정상이면 쿠키 세팅 자체를 하지 않는 게 안전
+            return;
         }
 
-        response.addHeader(HttpHeaders.SET_COOKIE, b.build().toString());
+        Refresh refresh = props.refresh();
+
+        ResponseCookie.ResponseCookieBuilder builder = baseRefreshCookie(refreshRaw);
+
+        long ttlSeconds = rememberMe ? refresh.rememberMeSeconds() : refresh.sessionTtlSeconds();
+        builder.maxAge(Duration.ofSeconds(ttlSeconds));
+
+       response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
     }
 
-    /** Refresh 쿠키 삭제 */
+    /** Refresh 쿠키 삭제 (속성(path/sameSite/secure)이 같아야 브라우저가 제대로 삭제함) */
     public void clearRefreshCookie(HttpServletResponse response) {
-        ResponseCookie cookie = baseRefreshCookie("") // 값 비움
+        ResponseCookie cookie = baseRefreshCookie("deleted")
                 .maxAge(Duration.ZERO) // 즉시 만료
                 .build();
 
@@ -74,7 +79,7 @@ public class AuthCookieUtils {
     }
 
     private ResponseCookie.ResponseCookieBuilder baseRefreshCookie(String value) {
-        var r = props.refresh();
+        Refresh r = props.refresh();
         return ResponseCookie.from(r.cookieName(), value)
                 .httpOnly(true)
                 .secure(r.cookieSecure())

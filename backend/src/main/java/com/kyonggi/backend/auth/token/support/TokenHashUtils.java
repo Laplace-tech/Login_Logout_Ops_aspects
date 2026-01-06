@@ -2,6 +2,7 @@ package com.kyonggi.backend.auth.token.support;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 import org.springframework.stereotype.Component;
 
@@ -16,19 +17,40 @@ import org.springframework.stereotype.Component;
 public class TokenHashUtils {
 
     /**
-     * Hashing 함수:
-     * - 입력 문자열(raw token)을 SHA-256 해시 후 hex 문자열로 반환
+     * raw 문자열을 SHA-256 해시 후 hex(64 chars) 문자열로 반환
      */
     public String sha256Hex(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("raw token must not be null/blank");
+        }
+
+        byte[] digest = sha256(raw.getBytes(StandardCharsets.UTF_8));
+        return toHex(digest);
+    }
+
+    private static byte[] sha256(byte[] input) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] digest = md.digest(raw.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(digest.length * 2);
-            for (byte b : digest) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            // SHA-256이 없으면 시스템이 정상 동작 불가 수준 -> 런타임 예외로 처리
+            return md.digest(input);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256이 없으면 JVM/환경 자체가 비정상에 가깝다.
             throw new IllegalStateException("SHA-256 not available", e);
         }
+    }
+
+    /**
+     * 바이트 배열을 소문자 hex 문자열로 변환
+     * - String.format 루프보다 빠르고 GC 부담이 적다.
+     */
+    private static String toHex(byte[] bytes) {
+        char[] hex = new char[bytes.length * 2];
+        final char[] digits = "0123456789abcdef".toCharArray();
+
+        for (int i = 0; i < bytes.length; i++) {
+            int v = bytes[i] & 0xFF;
+            hex[i * 2] = digits[v >>> 4];
+            hex[i * 2 + 1] = digits[v & 0x0F];
+        }
+        return new String(hex);
     }
 }

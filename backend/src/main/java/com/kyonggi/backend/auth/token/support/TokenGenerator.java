@@ -24,15 +24,13 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TokenGenerator {
 
+    private static final int TOKEN_BYTES = 48;
+
     private final SecureRandom secureRandom;
 
-    /**
-     * Refresh Token 생성
-     * - 48 Bytes 난수 생성
-     * - URL-safe Base64로 인코딩한 문자열 반환
-     */
+    /** Refresh Token raw 생성 */
     public String generateRefreshToken() {
-        byte[] bytes = new byte[48]; // 충분히 큼(예측 불가)
+        byte[] bytes = new byte[TOKEN_BYTES];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }

@@ -4,6 +4,7 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.ZoneId;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,8 +31,9 @@ public class AuthModuleConfig {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Bean
+    @ConditionalOnMissingBean(Clock.class) // ✅ 테스트가 Clock 제공하면 이건 안 만들어짐    
     public Clock clock() {
-        return Clock.system(KST);
+        return Clock.system(KST); // (기존 구현이 있으면 그걸 그대로 두면 됨)
     }
 
     @Bean

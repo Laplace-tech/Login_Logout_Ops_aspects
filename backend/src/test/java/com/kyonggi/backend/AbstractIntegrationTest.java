@@ -2,128 +2,168 @@ package com.kyonggi.backend;
 
 import java.time.Duration;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+
+import com.kyonggi.backend.support.TestClockConfig;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
- * 통합테스트 공통 베이스 클래스 (모든 통합 테스트가 상속하는 뼈대)
+ * [테스트 실행]:
+ * - cd backend
+ * - ./gradlew test --rerun-tasks --info --no-daemon
  *
- * ✅ 이 클래스 1개로 해결하려는 문제
- * - 통합테스트는 "진짜 DB/메일" 같은 외부자원이 필요함
- * - 로컬 환경(MySQL 설치/메일서버 등)에 의존하면 사람마다 깨짐
- * - 그래서 테스트 실행 시 컨테이너로 외부자원을 자동으로 띄우고,
- * Spring 설정을 그 컨테이너로 강제 연결한다.
- *
- * ✅ 보장되는 것
- * 1) 컨테이너가 반드시 켜진다 (상속/애너테이션 꼬임 방지)
- * 2) 스프링이 반드시 컨테이너 DB/메일로 붙는다 (yml 무시하고 강제 주입)
+ * [특정 테스트만 실행]:
+ * - ./gradlew test --no-daemon --tests com.kyonggi.backend.BackendApplicationTests
  */
-@SpringBootTest // ✅ "스프링 컨텍스트"를 실제로 띄운다. (단위테스트 X, 통합테스트 O)
-@ActiveProfiles("test") // ✅ application-test.yml 프로필을 활성화한다.
+
+
+/**
+ * AbstractIntegrationTest: 
+ * - 테스트 실행 시, 로컬 환경(내 PC의 MySQL/SMTP)과 완전히 독립된 '테스트 전용 환경'을 JVM안에서 구성한다.
+ * 
+ * 1) DB: Testcontainers MySQL (항상 같은 버전/깨끗한 DB)
+ * 2) 메일: MailHog 컨테이너 (SMTP + 조회용 HTTP API)
+ * 3) 시간: 테스트 전용 Clock (시간을 고정/이동 가능하게)
+ * 
+ * [테스트 실행]:
+ * - cd backend
+ * - ./gradlew test --rerun-tasks --info --no-daemon
+ *
+ * [특정 테스트만 실행]:
+ * - ./gradlew test --no-daemon --tests com.kyonggi.backend.BackendApplicationTests
+ */
+
+@Slf4j
+@SpringBootTest       // 실제 스프링 애플리케이션을 통째로 띄운다.
+@AutoConfigureMockMvc // 실제 톰캣을 띄우지 않고도 MVC 계층을 요청/응답으로 테스트 할 수 있다.
+@ActiveProfiles("test") // application-test.yml / test 프로필 빈 구성을 활성화한다.
+@Import(TestClockConfig.class) // 테스트에서만 쓰는 Clock Bean을 주입한다.
 public abstract class AbstractIntegrationTest {
 
+    private static final String MYSQL_IMAGE = "mysql:8.0.36";
+    private static final String MYSQL_DB = "kyonggi_board_test";
+    private static final String MYSQL_USER = "kyonggi";
+    private static final String MYSQL_PASSWORD = "kyonggi";
+
     /**
-     * ✅ MySQL 컨테이너
-     *
-     * - static: 테스트 클래스가 10개여도 JVM 기준으로 "1번만" 생성/실행시키려는 의도
-     * - mysql:8.0.36: 테스트 DB 엔진 버전 고정 (버전 바뀌면 미묘한 차이로 깨질 수 있어서)
-     * - withDatabaseName/Username/Password: 컨테이너 내부 DB 계정/스키마 세팅
-     * - startupAttempts/startupTimeout: 느린 환경(Wsl/CI)에서도 안정성 올리는 보험
-     *
-     * ✅ 핵심 포인트:
-     * - "테스트는 로컬 MySQL을 절대 안 쓴다."
-     * - 항상 이 컨테이너 DB로만 붙는다.
+     * - SMTP 1025: 스프링(JavaMailSender)가 "메일을 보내는 대상"
+     * - HTTP 8025: 테스트 코드가 "메일을 읽어서 OTP를 추출"할 때 쓰는 API
      */
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0.36")
-            .withDatabaseName("kyonggi_board_test")
-            .withUsername("kyonggi")
-            .withPassword("kyonggi")
+    private static final String MAILHOG_IMAGE = "mailhog/mailhog:v1.0.1";
+    private static final int MAILHOG_SMTP_PORT = 1025;
+    private static final int MAILHOG_HTTP_PORT = 8025;
+
+    @BeforeEach
+    void resetTestClock() {
+        TestClockConfig.reset(); // 매 테스트 메서드마다 Clock을 초기화
+    }
+
+    /**
+     * [Testcontainers: MySQLContainer]
+     * 
+     * "컨테이너 포트는 랜덤 매핑"
+     * - 컨테이너 내부 3306이 항상 로컬 3306으로 매핑되는 게 아님.
+     * - 그래서 jdbcUrl을 하드코딩하면 안 되고 getJdbcUrl()로 받아야 한다.
+     */
+    static final MySQLContainer<?> MYSQL = new MySQLContainer<>(MYSQL_IMAGE)
+            .withDatabaseName(MYSQL_DB)
+            .withUsername(MYSQL_USER)
+            .withPassword(MYSQL_PASSWORD)
             .withStartupAttempts(3)
             .withStartupTimeout(Duration.ofMinutes(2));
 
     /**
-     * ✅ MailHog 컨테이너
+     * [GenericContainer: MailHog]
      *
-     * - OTP 메일 통합테스트를 "진짜로" 하려면 SMTP 서버가 필요함
-     * - MailHog는 테스트용 SMTP + 웹 UI(API)를 제공
-     *
-     * - 1025: SMTP 포트 (스프링이 메일 발송할 때 붙는 포트)
-     * - 8025: HTTP 포트 (테스트가 메일 내용을 조회/파싱할 때 쓰는 포트)
+     * waitingFor(Wait.forHttp...):
+     * - 컨테이너 "프로세스"가 떴다고 해서 내부 서비스(HTTP API)가 즉시 준비되는 건 아님.
+     * - 준비되기 전에 테스트가 API 호출하면 404/connection refused로 간헐 실패.
+     * - 그래서 "HTTP 200 나올 때까지 기다림"을 걸어 안정화.
      */
-    // ✅ MailHog: “컨테이너 시작”이 아니라 “HTTP API가 200 줄 때까지” 기다리게
-    static final GenericContainer<?> MAILHOG = new GenericContainer<>("mailhog/mailhog:v1.0.1")
-            .withExposedPorts(1025, 8025)
+    static final GenericContainer<?> MAILHOG = new GenericContainer<>(MAILHOG_IMAGE)
+            .withExposedPorts(MAILHOG_SMTP_PORT, MAILHOG_HTTP_PORT)
             .waitingFor(
-                    org.testcontainers.containers.wait.strategy.Wait
-                            .forHttp("/api/v2/messages")
-                            .forPort(8025)
+                    Wait.forHttp("/api/v2/messages")
+                            .forPort(MAILHOG_HTTP_PORT)
                             .forStatusCode(200));
 
     /**
-     * ✅ static 블록에서 start()를 직접 호출하는 이유 (중요)
-     *
-     * - Testcontainers는 보통 @Testcontainers + @Container로 자동 실행시킬 수 있음
-     * - 하지만 "상속 구조 + 스프링 컨텍스트"가 섞이면
-     * 가끔 컨테이너가 안 뜨거나 늦게 떠서 datasource 연결이 터지는 꼬임이 생김
-     *
-     * ✅ 그래서 그냥 여기서 강제로 start() 호출해서:
-     * - "스프링 컨텍스트가 뜨기 전에"
-     * - DB/메일 컨테이너가 100% 살아있음을 보장한다.
+     * [static 초기화 블록에서 컨테이너를 먼저 부팅]
+     * 
+     * - @SpringBootTest는 컨텍스트 만들면서 DataSource 초기화를 시도하는데
+     *    그 순간 DB가 아직 준비 안 되어 있으면 ApplicationContext가 아예 실패한다.
+     * 
+     * - Testcontainers 정석은 @Testcontainers + @Container지만,
+     *    "상속 구조 + 스프링 컨텍스트" 조합에서 컨테이너 스타트 타이밍이 꼬여서
+     *    datasource 연결이 먼저 시도되는 케이스가 가끔 생긴다.
+     * 
+     * - 그래서, 스프링부트가 뜨기 전에 컨테이너부터 확정적으로 켠다.
+     *    그 후, 스프링을 키고 컨텍스트를 만들면서 datasource로 안전하게 DB와 연결
      */
     static {
-        try {
-            MYSQL.start();
-            MAILHOG.start();
-
-            System.setProperty(
-                    "test.mailhog.base-url",
-                    "http://" + getMailhogHost() + ":" + getMailhogHttpPort());
-
-            System.out.println("[TEST] Containers started");
-        } catch (Exception e) {
-            e.printStackTrace();
-            throw new RuntimeException("❌ Testcontainer init failed", e);
-        }
+        startContainersOnce();
     }
 
-    /**
-     * 스프링 설정을 "동적으로" 덮어씌우는 함수: 테스트를 언제나 컨테이너 DB로 붙게하고 로컬 환경과 무관함
-     * - @DynamicPropertySource 는 스프링이 ApplicationContext를 만들기 전에 실행된다.
-     * - application-test.yml에 뭐가 적혀있든 상관없이 "datasource"와 "flyway"설정을 컨테이너 DB로 강제한다.
-     */
     @DynamicPropertySource
     static void overrideProps(DynamicPropertyRegistry r) {
 
-        // --- datasource ---
+        // datasource 연결을 컨테이너 DB로 강제
         r.add("spring.datasource.url", MYSQL::getJdbcUrl);
         r.add("spring.datasource.username", MYSQL::getUsername);
         r.add("spring.datasource.password", MYSQL::getPassword);
         r.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
 
-        // --- flyway ---
+        // flyway: 마이그레이션도 같은 DB로 강제
         r.add("spring.flyway.url", MYSQL::getJdbcUrl);
         r.add("spring.flyway.user", MYSQL::getUsername);
         r.add("spring.flyway.password", MYSQL::getPassword);
 
-        // --- hikari ---
+        // hikari: 컨테이너 환경에서 연결 지연이 있어도 덜 터지게 보험
         r.add("spring.datasource.hikari.connection-timeout", () -> "30000");
         r.add("spring.datasource.hikari.initialization-fail-timeout", () -> "-1");
 
-        // --- mail ---
+        // mail: 컨테이너 MailHog로 강제
         r.add("spring.mail.host", AbstractIntegrationTest::getMailhogHost);
         r.add("spring.mail.port", AbstractIntegrationTest::getMailhogSmtpPort);
 
+        // MailHog는 auth/tls 필요 없음
         r.add("spring.mail.properties.mail.smtp.auth", () -> "false");
         r.add("spring.mail.properties.mail.smtp.starttls.enable", () -> "false");
         r.add("spring.mail.properties.mail.smtp.starttls.required", () -> "false");
 
-        // ✅ (중요) MailhogSupport가 쓸 base-url도 Spring 환경에 제공
-        r.add("test.mailhog.base-url",
-                () -> "http://" + getMailhogHost() + ":" + getMailhogHttpPort());
+        // 테스트 코드(MailhogSupport)가 HTTP API를 때릴 base-url도 함께 제공
+        r.add("test.mailhog.base-url", AbstractIntegrationTest::mailhogBaseUrl);
+    }
+
+    // 컨테이너 스타트
+    private static void startContainersOnce() {
+        try {
+            MYSQL.start();
+            MAILHOG.start();
+
+            String baseUrl = mailhogBaseUrl();
+            System.setProperty("test.mailhog.base-url", baseUrl);
+
+            log.info("===================================================================");
+            log.info("[TEST] Containers started");
+            log.info("[TEST] MySQL jdbcUrl={}", MYSQL.getJdbcUrl());
+            log.info("[TEST] MailHog smtp={} http={} baseUrl={}", getMailhogSmtpPort(), getMailhogHttpPort(), baseUrl);
+            log.info("==================================================================="); 
+
+        } catch (Exception e) {
+            log.error("❌ Testcontainer init failed", e);
+            throw new IllegalStateException("❌ Testcontainer init failed", e);
+        }
     }
 
     public static String getMailhogHost() {
@@ -131,10 +171,14 @@ public abstract class AbstractIntegrationTest {
     }
 
     public static int getMailhogSmtpPort() {
-        return MAILHOG.getMappedPort(1025);
+        return MAILHOG.getMappedPort(MAILHOG_SMTP_PORT);
     }
 
     public static int getMailhogHttpPort() {
-        return MAILHOG.getMappedPort(8025);
+        return MAILHOG.getMappedPort(MAILHOG_HTTP_PORT);
+    }
+
+    private static String mailhogBaseUrl() {
+        return "http://" + getMailhogHost() + ":" + getMailhogHttpPort();
     }
 }

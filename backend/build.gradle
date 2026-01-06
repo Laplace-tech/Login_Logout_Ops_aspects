@@ -25,35 +25,37 @@ repositories {
 }
 
 dependencies {
-	// --- Spring Boot Starters --
+
+	// Spring Boot Starters: (웹/검증/JPA/보안/메일)
 	implementation 'org.springframework.boot:spring-boot-starter-web' 		 // MVC/컨트롤러/MockMvc 기반
 	implementation 'org.springframework.boot:spring-boot-starter-validation' // @Valid, Bean Validation 
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'   // JPA + Hibernate + Repository
 	implementation 'org.springframework.boot:spring-boot-starter-security'	 // Spring Security 필터체인/JWT 인증
     implementation 'org.springframework.boot:spring-boot-starter-mail'		 // JavaMailSender (회원가입 OTP 메일)
 
-	// --- DB / Migration ---
-    // JPA만 쓰면 jdbc는 필수는 아니지만, Flyway/DB 관련 자동설정에서 같이 두는 경우 많음
+	// DB / Migration (MySQL + Flyway + JDBC)
+	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'org.flywaydb:flyway-mysql'
-	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	runtimeOnly 'com.mysql:mysql-connector-j' // MySQL 드라이버 (runtimeOnly): 컴파일 때는 굳이 필요 없고, 실행할 때만 JDBC 드라이버 로딩하면 됨
 
-	// --- JWT (JJWT) ---
+	// JWT (JJWT)
 	implementation "io.jsonwebtoken:jjwt-api:0.11.5" 	// 컴파일 타임에 쓰는 인터페이스
 	runtimeOnly  "io.jsonwebtoken:jjwt-impl:0.11.5" 	// 실제 구현체 (런타임에 필요)
 	runtimeOnly  "io.jsonwebtoken:jjwt-jackson:0.11.5"  // JSON 직렬화/역직렬화 지원 (클레임 처리 등)
 
-	// --- Lombok ---
+	// Lombok (컴파일 타임 애노테이션 처리)
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
 
-	// --- Test ---
+	// Test (Spring Test + Security Test + JUnit Launcher)
 	testImplementation 'org.springframework.boot:spring-boot-starter-test' // JUnit5, AssertJ, MockMVC, Spring test 등 "테스트 풀세트"
 	testImplementation 'org.springframework.security:spring-security-test' // @WithMockUSer, security mock request post processor 등
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher' 		   // IDE/Gradle 실행 시 필요할 때가 있음
 
-	// testcontainers:* 통합 테스트에서 진짜 MySQL 띄워서 테스트 (AbstractIntegrationTest.java)
+	// Testcontainers (통합테스트용 MySQL 컨테이너)
   	testImplementation "org.testcontainers:junit-jupiter"		
   	testImplementation "org.testcontainers:mysql"
 }	

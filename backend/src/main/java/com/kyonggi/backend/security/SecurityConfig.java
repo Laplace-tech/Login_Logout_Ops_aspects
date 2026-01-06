@@ -11,7 +11,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import lombok.RequiredArgsConstructor;
 
 /**
- * Spring Security 전역 보안 설정 클래스
+ * Spring Security 전역 보안 설정
  * 
  *  1) @Configuration 
  *  - 이 클래스가 "스프링 설정 클래스"임을 의미
@@ -51,12 +51,12 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable()) // CSRF 비활성화 - 지금은 REST API + JWT 방식이고 "세션/쿠키 기반 인증"을 쓰지 않기 때문에 필요 없음.
                 .httpBasic(b -> b.disable()) // HTTP Basic 인증 비활성화 - Authorization: Basic ... 방식 사용 안 함
                 .formLogin(f -> f.disable()) // formLogin 비활성화 - 스프링 기본 로그인 페이지 사용 안 함
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // 세션 사용 안 함 - 로그인 상태를 서버 세션에 저장하지 않음
+
+                // 세션 사용 안 함 - 로그인 상태를 서버 세션에 저장하지 않음
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 
                 // 인증 실패(= 인증 없이 보호 리소스 접근) 응답 방식 커스터마이즈 - 401 Unauthorized
-                .exceptionHandling(eh -> eh
-                        .authenticationEntryPoint(restAuthEntryPoint())
-                )
+                .exceptionHandling(eh -> eh.authenticationEntryPoint(restAuthEntryPoint()))
 
                 // JWT 필터 등록: UsernamePasswordAuthenticationFilter 전에 실행되도록 설정
                 .addFilterBefore(
@@ -64,21 +64,22 @@ public class SecurityConfig {
                         UsernamePasswordAuthenticationFilter.class
                 )
 
-                // URL별 접근 제어
+                // URL별 접근 정책(인가)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/error").permitAll() // 스프링 내부 에러 페이지 접근 허용
+                        // 스프링 내부 에러 페이지 접근 허용
+                        .requestMatchers("/error").permitAll()
 
-                        // 회원가입/로그인/토큰 재발급/로그아웃은 비로그인 허용
+                        // 인증 필요 없는 Auth 엔드포인트
                         .requestMatchers("/auth/signup/**").permitAll()
                         .requestMatchers("/auth/login").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
                         .requestMatchers("/auth/logout").permitAll()
 
-                        // 공개 조회 API
-                        .requestMatchers(HttpMethod.GET, "/posts/**", "/categories/**").permitAll() // 조회 전용 API는 비로그인 허용
+                        // 공개 조회 API (예시)
+                        .requestMatchers(HttpMethod.GET, "/posts/**", "/categories/**").permitAll()
                         
-                        // 나머지는 인증 필요 (/auth/me 포함)
-                        .anyRequest().authenticated() // 그 외 모든 요청은 인증 필요
+                        // 그 외는 인증 필요 (/auth/me 포함)
+                        .anyRequest().authenticated()
                 )
                 .build(); // SecurityFilterChain 생성
     }

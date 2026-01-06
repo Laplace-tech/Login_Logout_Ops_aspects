@@ -62,10 +62,6 @@ public final class AuthHttpSupport {
     public record RefreshResult(String accessToken, String refreshRaw, List<String> setCookieHeaders) {}
 
 
-    // =========================================================
-    // HTTP low-level helpers
-    // =========================================================
-
     // POST: /auth/signup/otp/request
     public static ResultActions performSignupOtpRequest(MockMvc mvc, String email) throws Exception {
         return mvc.perform(post(SIGNUP_OTP_REQUEST_ENDPOINT)
@@ -122,7 +118,8 @@ public final class AuthHttpSupport {
     // GET: /auth/me
     public static ResultActions performMe(MockMvc mvc, String authorizationHeaderOrNull) throws Exception {
         var req = get(ME_ENDPOINT); 
-        if (authorizationHeaderOrNull != null) req.header(HttpHeaders.AUTHORIZATION, authorizationHeaderOrNull);
+        if (authorizationHeaderOrNull != null) 
+            req.header(HttpHeaders.AUTHORIZATION, authorizationHeaderOrNull);
         return mvc.perform(req);
     }
 
@@ -132,10 +129,6 @@ public final class AuthHttpSupport {
     }
 
 
-
-    // =========================================================
-    // ErrorCode 기반 Error assertions (status + body.code 검증)
-    // =========================================================
 
     /**
      * 에러 응답 공통 검증:
@@ -166,10 +159,6 @@ public final class AuthHttpSupport {
     }
 
 
-    
-    // =========================================================
-    // 파싱 helper들 (JSON / Set-Cookie)
-    // =========================================================
 
     // 응답 body(String)를 JSON으로 파싱해서 JsonNode로 반환
     public static JsonNode readJson(MvcResult res) throws Exception {
@@ -206,8 +195,9 @@ public final class AuthHttpSupport {
 
         // "COOKIE_NAME="로 시작하는 라인 찾기 (가장 안정적)
         return setCookieHeaders.stream()
-                .filter(h -> h != null && h.startsWith(cookieName + "="))
+                .filter(header -> header != null)
                 .map(String::trim)
+                .filter(header -> header.startsWith(cookieName + "="))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException(
                         "Set-Cookie line for " + cookieName + " not found. headers=" + setCookieHeaders

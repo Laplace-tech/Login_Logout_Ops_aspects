@@ -17,10 +17,9 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * 로그아웃
- * - refresh 쿠키가 없거나 DB에 없거나 이미 REVOKE여도 -> 그냥 성공
- * - 서버 쪽 Refresh 토큰 revoke + 클라이언트 쿠키 삭제
+ * - refresh 쿠키가 없거나, DB에 없거나, 이미 revoked여도 -> 그냥 성공(멱등)
+ * - 서버 쪽 RefreshToken revoke + 클라이언트 쿠키 삭제
  */
-
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/auth")
@@ -33,9 +32,9 @@ public class AuthLogoutController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void logout(HttpServletRequest request, HttpServletResponse response) {
         String refreshRaw = cookieUtils.readRefreshCookie(request);
-        
-        // 멱등: 없거나/DB에 없거나/이미 revoke여도 그냥 성공
-        refreshTokenService.revokeIfPresent(refreshRaw, RefreshRevokeReason.LOGOUT.name());
+
+        // 멱등 revoke
+        refreshTokenService.revokeIfPresent(refreshRaw, RefreshRevokeReason.LOGOUT);
 
         // 쿠키는 항상 삭제 시도
         cookieUtils.clearRefreshCookie(response);

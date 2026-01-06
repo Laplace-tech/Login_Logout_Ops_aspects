@@ -1,5 +1,8 @@
 package com.kyonggi.backend.auth.identity.signup.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.kyonggi.backend.global.jackson.TrimStringDeserializer;
+
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
@@ -9,5 +12,7 @@ import jakarta.validation.constraints.NotBlank;
  * - "경기대 도메인인지" 같은 정책 검증은 @Service 계층에서 2차로 처리한다.
  */
 public record SignupOtpRequest(
-        @NotBlank @Email String email
+        @JsonDeserialize(using = TrimStringDeserializer.class)
+        @NotBlank 
+        @Email String email
 ) {};

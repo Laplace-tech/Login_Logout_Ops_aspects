@@ -11,6 +11,14 @@ import com.kyonggi.backend.security.AuthPrincipal;
 
 import lombok.RequiredArgsConstructor;
 
+/**
+ * [내 정보 조회 API 컨트롤러]
+ * 
+ * 동작 흐름:
+ * - JwtAuthenticationFilter가 AccessToken(JWT)을 검증한다.
+ * - 검증 성공 시 SecurityContext에 Authentication(principal=AuthPrincipal)을 넣는다.
+ * - @AuthenticationPrincipal로 principal을 주입받아 서비스에 전달한다.
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/auth")
@@ -20,7 +28,8 @@ public class AuthMeController {
 
     @GetMapping("/me")
     public MeResponse me(@AuthenticationPrincipal AuthPrincipal principal) {
-        return meService.me(principal);
+        // 인증된 사용자의 "내 정보"를 반환한다.
+        return meService.me(principal); 
     }
 
 }

@@ -131,6 +131,9 @@ dmysql -e "select * from refresh_tokens;"
 grep -Rni --include="*.java" "AuthProperties" .
 - 설정 클래스 참조 위치를 빠르게 찾기
 
+grep -Rnw --include="*.java" "EMAIL" .
+- 대소문자 구분
+
 rm /tmp/*.txt
 - curl 쿠키 파일 정리
 
