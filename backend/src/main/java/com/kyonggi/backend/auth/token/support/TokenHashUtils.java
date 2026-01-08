@@ -4,8 +4,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-import org.springframework.stereotype.Component;
-
 /**
  * 토큰 해시 유틸
  * 
@@ -13,13 +11,13 @@ import org.springframework.stereotype.Component;
  * - 그래서 DB에는 "해시(token_hash)"만 저장하고 실제 비교는 
  *   : incoming raw token -> (sha256Hex) -> DB token_hash와 비교
  */
-@Component
-public class TokenHashUtils {
+public final class TokenHashUtils {
+    private TokenHashUtils() {}
 
     /**
      * raw 문자열을 SHA-256 해시 후 hex(64 chars) 문자열로 반환
      */
-    public String sha256Hex(String raw) {
+    public static String sha256Hex(String raw) {
         if (raw == null || raw.isBlank()) {
             throw new IllegalArgumentException("raw token must not be null/blank");
         }

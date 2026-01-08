@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.kyonggi.backend.auth.identity.login.dto.LoginRequest;
 import com.kyonggi.backend.auth.identity.login.dto.LoginResponse;
 import com.kyonggi.backend.auth.identity.login.service.LoginService;
+import com.kyonggi.backend.auth.identity.login.service.LoginService.LoginResult;
 import com.kyonggi.backend.auth.token.support.AuthCookieUtils;
 
 import jakarta.servlet.http.HttpServletResponse;
@@ -15,40 +16,33 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 /**
- * 로그인 API 컨트롤러 (web 계층)
- * 
- * 컨트롤러가 해야 할 일(=얇게 유지해야 함)
- * - (@Valid @RequestBody LoginRequest req): HTTP 요청(JSON)을 DTO로 역직렬화 & DTO에 대한 1차 검증
- * - 실제 비즈니스 로직은 서비스(@Service)로 위임하고 서비스 결과를 HTTP 응답으로 변환
- * 
- * 이 엔드포인트가 반환하는 것: LoginResponse(String accessToken)
- * - Access Token: 응답 body(JSON)로 반환 (프론트가 메모리에 들고 있다가 Authorization 헤더에 붙임)
- * - Refresh Token: HttpOnly 쿠키(Set-Cookie)로 반환 (JS에서 접근 불가 -> XSS 방어)
- * 
- * - Access Token: 짧은 수명(자주 갱신), 매 요청 Authorization: Bearer ... 로 사용
- * - Refresh Token: 긴 수명(재발급용), 탈취 위험 낮추려고 HttpOnly 쿠키로 보관 + 서버(DB)에서 세션 통제
+ * 로그인 API
+ *
+ * - 요청(JSON) 검증: @Valid DTO
+ * - 핵심 로직: 서비스로 위임(인증/정책/토큰 발급)
+ * - 응답 변환:
+ *   - accessToken: 바디
+ *   - refreshToken: HttpOnly 쿠키
  */
+
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/auth")
 public class AuthLoginController {
 
-    private final LoginService loginService; // 로그인 비즈니스 로직(인증/토큰 발급)을 담당
+    private final LoginService loginService;
     private final AuthCookieUtils cookieUtils; // refresh token 쿠키를 생성/삭제하는 유틸
 
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest req, HttpServletResponse response) {
 
-        var result = loginService.login(
+        LoginResult result = loginService.login(
                 req.email(),
                 req.password(),
                 req.rememberMeOrFalse()
         );
 
-        // refresh는 쿠키로
         cookieUtils.setRefreshCookie(response, result.refreshRaw(), result.rememberMe());
-
-        // access는 바디로
         return new LoginResponse(result.accessToken());
     }
 }

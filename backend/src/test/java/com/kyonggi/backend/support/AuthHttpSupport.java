@@ -220,8 +220,8 @@ public final class AuthHttpSupport {
      * - SameSite=Lax: CSRF 완화
      * 
      * ✅ rememberMe에 따른 분기
-     * - persistentExpected=true  -> Max-Age= 있어야 함 (영속 쿠키)
-     * - persistentExpected=false -> Max-Age= 없어야 함 (세션 쿠키)
+     * - persistentExpected=true  -> TTL: 7 days
+     * - persistentExpected=false -> TTL: 1 day
      */
     public static void assertRefreshCookiePolicy(String setCookieLine, boolean persistentExpected) {
         assertThat(setCookieLine).contains("HttpOnly");

@@ -4,12 +4,17 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 
 /**
- * [공통 API 에러 응답 DTO: 모든 에러 응답을 동일한 포맷으로 내려주기 위함]
+ * 공통 API 에러 응답 DTO
  * 
- * - code: 프로그램이 분기할 안정적인 에러 식별자 (ex: OTP_COOLDOWN)
- * - message: 사용자에게 보여줄 문장(로케일/정책에 따라 변경 가능)
- * - retryAfterSeconds: 재시도 가능 시간(주로 429 에서 사용)
- * - details: 디버깅/추가정보(필요할 때만, 없으면 null)
+ * 원칙:
+ * - 모든 레이어(ControllerAdvice / EntryPoint / Filter)에서  에러 응답엗 대하여
+ *   항상 동일한 JSON 스키마 포맷를 유지한다.
+ *
+ * 필드:
+ * - code: 클라이언트 분기용 안정 식별자 (ErrorCode.name())
+ * - message: 사용자 메시지(정책/로케일에 따라 바뀔 수 있음)
+ * - retryAfterSeconds: 재시도 가능 시간(주로 429)
+ * - details: 디버깅/추가 정보(필요 시만)
  * 
  * 1) record <className>(...)
  *  - 불변 데이터 묶음, 단순 데이터 전달용 DTO
@@ -19,12 +24,11 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ApiError(
-        String code,    // 에러 식별 코드
-        String message, // 사용자에게 보여줄 에러 메세지
+        String code,    // ex: "INVALID_CREDENTIALS"
+        String message, // ex: "이메일 또는 비밀번호가 올바르지 않습니다."
         Integer retryAfterSeconds, 
         Object details
 ) {
-    
     public static ApiError of(ErrorCode errorCode) {
         return new ApiError(errorCode.name(), errorCode.defaultMessage(), null, null);
     }

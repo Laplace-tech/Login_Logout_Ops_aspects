@@ -12,6 +12,10 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Spring Security 전역 보안 설정
+ *
+ * - JWT 인증: JwtAuthenticationFilter
+ * - 인증 필요 리소스 접근 시 인증 없으면: RestAuthEntryPoint (AUTH_REQUIRED)
+ * - 토큰은 있는데 invalid면: JwtAuthenticationFilter (ACCESS_INVALID)
  * 
  *  1) @Configuration 
  *  - 이 클래스가 "스프링 설정 클래스"임을 의미

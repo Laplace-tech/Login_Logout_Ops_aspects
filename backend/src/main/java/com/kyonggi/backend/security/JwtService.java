@@ -22,10 +22,17 @@ import io.jsonwebtoken.security.Keys;
 
 /**
  * Access Token(JWT) 발급/검증 서비스
- * - 서버가 매번 DB를 조회하지 않고도(Stateless) 서명 검증만으로 "내가 발급한 토큰"인지 확인 가능
  * 
- * - issueAccessToken(userId, role): JWT 생성 및 발급 (header/payload/signature를 jjwt가 알아서 만들어줌)
- * - verifyAccessToken(token): JWT에서 서명/만료/issuer를 검증 후 AuthPrincipal로 복원
+ * - HTTP(상태코드/응답)는 모른다. "유효/무효"만 판단한다.
+ * - 서버가 매번 DB를 조회하지 않고도(Stateless) 서명 검증만으로 "내가 발급한 토큰"인지 확인 가능
+ * - 검증 실패는 InvalidJwtException(런타임)으로 통일해서 던지고, 필터/엔트리포인트가 401 ApiError로 변환한다.
+ * 
+ * 기능:
+ * - 발급: issueAccessToken(userId, role): 
+ *      JWT 생성 및 발급 (header/payload/signature를 jjwt가 알아서 만들어줌)
+ * - 검증: verifyAccessToken(token): 
+ *      JWT에서 서명/만료/issuer를 검증 후 AuthPrincipal로 복원
+ * 
  * 
  * Access Token:
  * - 매 요청마다 서버에게 내 신원을 증명하는 짧은 수명 토큰
@@ -52,10 +59,16 @@ public class JwtService {
         this.clock = clock;
 
         // secret length 검증 + 키 생성
-        byte[] secretBytes = jwtProps.secret().getBytes(StandardCharsets.UTF_8);
+        String secret = jwtProps.secret();
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("JWT secret must not be blank");
+        }
+
+        byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
         if (secretBytes.length < MIN_SECRET_BYTES) {
             throw new IllegalStateException("JWT secret must be at least " + MIN_SECRET_BYTES + " bytes for HS256");
         }
+        
         this.key = Keys.hmacShaKeyFor(secretBytes);
  
         // Parser 빌딩: 향후 verifyAccessToken()에서 지금 설정된 발행자(issuer)와 key로 검증
@@ -67,7 +80,7 @@ public class JwtService {
                 .build();
     }
 
-    // "userId, role" 기반으로 Access Token을 만들어 발급
+    /** userId/role 기반 Access JWT 발급 */
     public String issueAccessToken(Long userId, UserRole role) {
         if (userId == null) throw new IllegalArgumentException("userId must not be null");
         if (role == null) throw new IllegalArgumentException("role must not be null");
@@ -96,7 +109,7 @@ public class JwtService {
             if (token == null || token.isBlank()) {
                 throw new JwtException("token is null or blank");
             }
-            
+
             // 서명/만료/issuer/포맷 검증 (하나라도 실패하면 JwtException)
             Jws<Claims> jws = jwtParser.parseClaimsJws(token);
             Claims claims = jws.getBody();
@@ -106,7 +119,6 @@ public class JwtService {
             UserRole role = parseRole(claims.get(ROLE_CLAIM, String.class));
 
             return new AuthPrincipal(userId, role);
-            
         } catch (JwtException | IllegalArgumentException e) {
             throw new InvalidJwtException("Invalid JWT", e);
         }

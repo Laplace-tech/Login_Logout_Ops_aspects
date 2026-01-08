@@ -8,15 +8,12 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * [DTO의 역할]
- * - Controller가 요청 JSON을 받을 때 매핑되는 입력 전용 객체로,
- *   비즈니스 로직 없이 주로 1차 입력 검증(@Valid) 역할
- * 
- * 컨트롤러에서 보통 이렇게 사용됨:
- *  @PostMapping("/auth/signup/complete")
- *  public ResponseEntity<?> complete(@Valid @RequestBody SignupCompleteRequest req) { ... }
+ * 회원가입 완료 요청
+ * - Controller가 요청 바디를 JSON으로 받을 때 매핑되는(@RequestBody) 입력 전용 객체
+ * - 비즈니스 로직 없이 주로 1차 입력 검증(@Valid) 역할
  */
 public record SignupCompleteRequest(
+
         @JsonDeserialize(using = TrimStringDeserializer.class)
         @NotBlank(message = "이메일은 필수입니다.")
         @Email(message = "이메일 형식이 올바르지 않습니다.")

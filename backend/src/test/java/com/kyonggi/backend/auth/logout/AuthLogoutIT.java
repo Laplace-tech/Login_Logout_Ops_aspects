@@ -27,7 +27,6 @@ import jakarta.servlet.http.Cookie;
 class AuthLogoutIT extends AbstractAuthIntegrationTest {
 
     @Autowired MockMvc mvc;
-    @Autowired TokenHashUtils tokenHashUtils;
 
     @BeforeEach
     void setUp() {
@@ -40,7 +39,7 @@ class AuthLogoutIT extends AbstractAuthIntegrationTest {
         LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
         String refreshRaw = login.refreshRaw();
 
-        String hash = tokenHashUtils.sha256Hex(refreshRaw);
+        String hash = TokenHashUtils.sha256Hex(refreshRaw);
         assertThat(refreshTokenRepository.findByTokenHash(hash)).isPresent();
 
         MvcResult res = AuthHttpSupport.performLogout(mvc, new Cookie(AuthHttpSupport.REFRESH_COOKIE, refreshRaw))

@@ -18,13 +18,12 @@ import lombok.RequiredArgsConstructor;
 /**
  * Refresh Token 쿠키 유틸
  *
- * - refresh token은 보통 "HttpOnly 쿠키"로 내려서 JS에서 접근 못하게 해서(XSS 방어) 탈취 위험을 낮춘다.
- * - 쿠키 옵션(path/samesite/secure/maxAge)을 한 곳에서 통일해서 관리하면 컨트롤러가 얇아지고, 설정 실수를 줄일 수
- * 있다.
+ * - refresh token은 보통 HttpOnly 쿠키로 내려 JS 접근을 막는다(XSS 완화).
+ * - cookie 옵션(path/samesite/secure/maxAge)을 한 곳에서 통일한다.
  *
  * ResponseCookie
- * - Spring이 제공하는 "Set-Cookie 헤더" 문자열 생성기
- * - 쿠키 옵션들을 안전하게 조합해서 최종 "Set-Cookie: ..." 값을 만들어준다.
+ * - rememberMe 여부와 무관하게 항상 Max-Age를 포함하는 persistent 쿠키로 내려준다.
+ * - TTL만 rememberMeSeconds / sessionTtlSeconds로 분기한다.
  */
 @Component
 @RequiredArgsConstructor
@@ -49,24 +48,21 @@ public class AuthCookieUtils {
     }
 
     /**
-     * Refresh 쿠키 세팅
+     * Refresh 쿠키 세팅 
      * - rememberMe=true  -> 긴 TTL (Max-Age = rememberMeSeconds)
      * - rememberMe=false -> 짧은 TTL (Max-Age = sessionTtlSeconds)
      */
     public void setRefreshCookie(HttpServletResponse response, String refreshRaw, boolean rememberMe) {
-        if (refreshRaw == null || refreshRaw.isBlank()) {
-            // 값이 비정상이면 쿠키 세팅 자체를 하지 않는 게 안전
-            return;
-        }
+        if (refreshRaw == null || refreshRaw.isBlank()) return;
 
-        Refresh refresh = props.refresh();
+        Refresh refreshProps = props.refresh(); 
+        long ttlSeconds = rememberMe ? refreshProps.rememberMeSeconds() : refreshProps.sessionTtlSeconds();
 
-        ResponseCookie.ResponseCookieBuilder builder = baseRefreshCookie(refreshRaw);
-
-        long ttlSeconds = rememberMe ? refresh.rememberMeSeconds() : refresh.sessionTtlSeconds();
-        builder.maxAge(Duration.ofSeconds(ttlSeconds));
-
-       response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
+        ResponseCookie cookie = baseRefreshCookie(refreshRaw)
+                .maxAge(Duration.ofSeconds(ttlSeconds))
+                .build();
+                
+       response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
     }
 
     /** Refresh 쿠키 삭제 (속성(path/sameSite/secure)이 같아야 브라우저가 제대로 삭제함) */

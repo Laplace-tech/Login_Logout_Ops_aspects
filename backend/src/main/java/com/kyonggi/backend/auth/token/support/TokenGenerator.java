@@ -10,15 +10,8 @@ import lombok.RequiredArgsConstructor;
 /**
  * Refresh Token 원문 생성기
  * 
- * SecureRandom:
- * - 토큰은 "예측 불가능"해야 한다
- * - java.util.Random은 예측 가능성이 있어 보안 토큰에 부적절
- * - SecureRandom은 암호학적으로 안전한 난수 생성기
- * 
- * Base64 URL-safe:
- * - 토큰을 쿠키/헤더/URL에 넣을 수 있게 안전한 문자셋으로 인코딩
- * - getUrlEncoder(): +, / 대신 URL-safe 문자(-, _) 사용
- * - withoutPadding(): 끝의 '=' 패딩 제거 → 더 깔끔한 토큰 형태
+ * - SecureRandom: 예측 불가능한 난수 필요
+ * - Base64 URL-safe: 쿠키/헤더에 안전한 문자셋 (-, _) 사용, padding 제거
  */
 @Component
 @RequiredArgsConstructor

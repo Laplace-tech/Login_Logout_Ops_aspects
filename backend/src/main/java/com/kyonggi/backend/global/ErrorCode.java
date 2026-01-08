@@ -2,6 +2,13 @@ package com.kyonggi.backend.global;
 
 import org.springframework.http.HttpStatus;
 
+/**
+ * 에러 코드(클라이언트 분기용) + HTTP 상태 + 기본 메시지의 단일 소스.
+ *
+ * 원칙:
+ * - code = enum name() (변경 시 API 계약 깨짐)
+ * - status/message는 정책에 따라 바뀔 수 있지만, code는 최대한 고정한다.
+ */
 public enum ErrorCode {
 
     // Signup / Email policy

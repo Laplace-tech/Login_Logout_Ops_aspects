@@ -102,16 +102,24 @@ public class EmailOtp {
     }
 
     // OTP 만료 여부 판단
-    public boolean isExpired(LocalDateTime now) {return expiresAt.isBefore(now);}
+    public boolean isExpired(LocalDateTime now) {
+        return expiresAt.isBefore(now);
+    }
 
     // 인증 완료 여부
-    public boolean isVerified() {return verifiedAt != null;}
+    public boolean isVerified() {
+        return verifiedAt != null;
+    }
 
     // 인증 성공 처리
-    public void markVerified(LocalDateTime now) {this.verifiedAt = now;}
+    public void markVerified(LocalDateTime now) {
+        this.verifiedAt = now;
+    }
 
     // 인증 실패 횟수 증가
-    public void increaseFailure() {this.failedAttempts += 1;}
+    public void increaseFailure() {
+        this.failedAttempts += 1;
+    }
 
     // getters
     public String getEmail() {return email;}

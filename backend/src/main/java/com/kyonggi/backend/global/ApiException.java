@@ -7,6 +7,64 @@ import lombok.Getter;
 /**
  * 비즈니스 로직에서 사용하는 실무형 커스텀 예외 (중앙화된 ErrorCode 기반)
  * 
+ * - 서비스/도메인 정책 위반을 ErrorCode로 표현한다.
+ * - 전역 핸들러(GlobalExceptionHandler) / 보안 레이어(SecurityErrorWriter)가
+ *   이 예외를 ApiError로 직렬화해 응답 포맷을 고정한다.
+ */
+@Getter
+public class ApiException extends RuntimeException {
+
+    private final HttpStatus status; // ex: HttpStatus.UNAUTHORIZED
+    private final String code;       // ex: "REFRESH_EXPIRED"
+    private final Integer retryAfterSeconds;
+    private final Object details;
+
+    /**
+     * 실무형(중앙화된 ErrorCode 기반)
+     * - 서비스 계층에서 예외 발생 시, 아래와 같은 방식으로 예외를 생성해 던짐.
+     * => throw new ApiException(ErrorCode.REFRESH_EXPIRED);
+     */
+    public ApiException(ErrorCode errorCode) {
+        this(errorCode, errorCode.defaultMessage(), null, null);
+    }
+
+    public ApiException(ErrorCode errorCode, String messageOverride) {
+        this(errorCode, messageOverride, null, null);
+    }
+
+    public ApiException(ErrorCode errorCode, Integer retryAfterSeconds) {
+        this(errorCode, errorCode.defaultMessage(), retryAfterSeconds, null);
+    }
+
+    public ApiException(ErrorCode errorCode, Integer retryAfterSeconds, Object details) {
+        this(errorCode, errorCode.defaultMessage(), retryAfterSeconds, details);
+    }
+
+    public ApiException(ErrorCode errorCode, String messageOverride, Integer retryAfterSeconds, Object details) {
+        // super(...)는 첫 줄이어야 해서 errorCode null 검사보다 앞에 둘 수밖에 없음.
+        super(resolveMessage(errorCode, messageOverride));
+
+        if (errorCode == null) 
+            throw new IllegalArgumentException("ErrorCode must not be null");
+
+        this.status = errorCode.status();
+        this.code = errorCode.name();
+        this.retryAfterSeconds = retryAfterSeconds;
+        this.details = details;
+    }
+
+    private static String resolveMessage(ErrorCode errorCode, String messageOverride) {
+        if (messageOverride != null && !messageOverride.isBlank()) {
+            return messageOverride;
+        }
+        return (errorCode == null) ? null : errorCode.defaultMessage();
+    }
+}
+
+
+/**
+ * 비즈니스 로직에서 사용하는 실무형 커스텀 예외 (중앙화된 ErrorCode 기반)
+ * 
  * - 서비스 계층에서 정책 위반을 발견하면, 아래와 같은 방식으로 예외를 생성해 던짐.
  *  => throw new ApiException(ErrorCode.REFRESH_EXPIRED);
  * 
@@ -33,41 +91,3 @@ import lombok.Getter;
  *                                           e.getDetails()));
  *      }
  */
-
-@Getter
-public class ApiException extends RuntimeException {
-
-    private final HttpStatus status; // HTTP 응답 상태코드
-    private final String code; // 에러 식별 코드
-    private final Integer retryAfterSeconds; // 재시도 가능 시간
-    private final Object details;
-
-    /**
-     * 실무형(중앙화된 ErrorCode 기반)
-     * - 서비스 계층에서 예외 발생 시, 아래와 같은 방식으로 예외를 생성해 던짐.
-     * => throw new ApiException(ErrorCode.REFRESH_EXPIRED);
-     */
-    public ApiException(ErrorCode errorCode) {
-        this(errorCode, errorCode.defaultMessage(), null, null);
-    }
-
-    public ApiException(ErrorCode errorCode, String messageOverride) {
-        this(errorCode, messageOverride, null, null);
-    }
-
-    public ApiException(ErrorCode errorCode, Integer retryAfterSeconds) {
-        this(errorCode, errorCode.defaultMessage(), retryAfterSeconds, null);
-    }
-
-    public ApiException(ErrorCode errorCode, Integer retryAfterSeconds, Object details) {
-        this(errorCode, errorCode.defaultMessage(), retryAfterSeconds, details);
-    }
-
-    public ApiException(ErrorCode errorCode, String messageOverride, Integer retryAfterSeconds, Object details) {
-        super(messageOverride);
-        this.status = errorCode.status();
-        this.code = errorCode.name();
-        this.retryAfterSeconds = retryAfterSeconds;
-        this.details = details;
-    }
-}

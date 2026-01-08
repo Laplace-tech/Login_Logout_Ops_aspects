@@ -24,10 +24,15 @@ import com.kyonggi.backend.global.ErrorCode;
 import lombok.RequiredArgsConstructor;
 
 /**
- * OTP 발급: public void requestSignupOtp(String rawEmail) {...}
- * OTP 검증: public void verifySignupOtp(String rawEmail, String incomingCode) {...}
+ * 회원가입 OTP 정책 서비스
  * 
- * [테스트 케이스]
+ * OTP 발급: public void requestSignupOtp(String rawEmail) {...}
+ *  - 도메인 검증 / 정규화
+ *  - 해당 이메일 상태 검사 (쿨다운 / 일일 제한 / 검증 완료)
+ *  - OTP는 보안을 위해 해시만 DB에 저장, 원문은 SignupMailSender가 커밋 이후 이벤트로 메일 전송
+ * 
+ * OTP 검증: public void verifySignupOtp(String rawEmail, String incomingCode) {...}
+ *  - 실패 횟수는 반드시 누적되어야 하므로, "OTP 코드 불일치"는 롤백하지 않는다. (해당 레코드의 속성 값이 증가해야함)
  */
 @Service
 @RequiredArgsConstructor
@@ -45,7 +50,6 @@ public class SignupOtpService {
 
     @Transactional
     public void requestSignupOtp(String rawEmail) {
-        // 발송된 이메일 검증 및 정규화
         String email = normalizeKyonggiEmail(rawEmail); // @DisplayName("request: kyonggi 도메인 아니면 → 400 EMAIL_DOMAIN_NOT_ALLOWED")
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -53,65 +57,42 @@ public class SignupOtpService {
 
         //  락 조회: 동시 요청이 정책을 뚫지 못하게 한다.
         EmailOtp otp = emailOtpRepository.findByEmailAndPurposeForUpdate(email, PURPOSE).orElse(null);
-
         if (otp != null) {
-            // 이미 검증 + 미만료면 재요청 막음
-            if (otp.isVerified() && !otp.isExpired(now)) {
-                throw new ApiException(ErrorCode.OTP_ALREADY_VERIFIED); // @DisplayName("request: 이미 verified + 미만료면 → 400 OTP_ALREADY_VERIFIED")
-            }
-
-            // 일일 제한
-            int currentCount = otp.getSendCountDate().equals(today) ? otp.getSendCount() : 0;
-            if (currentCount >= props.dailySendLimit()) {
-                throw new ApiException(ErrorCode.OTP_DAILY_LIMIT); // @DisplayName("request: daily-send-limit 초과 → 429 OTP_DAILY_LIMIT (기본 프로퍼티로)")
-            }
-
-            // 쿨다운
-            if (otp.getResendAvailableAt().isAfter(now)) {
-                long retry = Duration.between(now, otp.getResendAvailableAt()).getSeconds(); // @DisplayName("request: 연속 요청(쿨다운 내) → 429 OTP_COOLDOWN")
-                throw new ApiException(
-                        ErrorCode.OTP_COOLDOWN,
-                        ErrorCode.OTP_COOLDOWN.defaultMessage(),
-                        (int) Math.max(retry, 1),
-                        null);
-            }
+            // @DisplayName("request: 이미 verified + 미만료면 → 400 OTP_ALREADY_VERIFIED") 
+            // @DisplayName("request: daily-send-limit 초과 → 429 OTP_DAILY_LIMIT (기본 프로퍼티로)")
+            // @DisplayName("request: 연속 요청(쿨다운 내) → 429 OTP_COOLDOWN")
+            validateReissuePolicy(otp, now, today);
         }
 
-        // 새 OTP 생성 (DB에는 해시만)
         String code = otpCodeGenerator.generate6Digits();
         String codeHash = otpHasher.hash(code);
 
         LocalDateTime expiresAt = now.plusMinutes(props.ttlMinutes());
         LocalDateTime resendAvailableAt = now.plusSeconds(props.resendCooldownSeconds());
 
+        // EmailOtp 엔티티 생성
         EmailOtp toSave = (otp == null)
                 ? EmailOtp.create(email, codeHash, PURPOSE, expiresAt, now, today, resendAvailableAt)
                 : reissueAndReturn(otp, codeHash, expiresAt, now, today, resendAvailableAt);
 
         try {
-            /**
-             * @DisplayName("request: 정상 → 2xx + 메일로 OTP 발송됨")
-             * @DisplayName("request: verified라도 만료된 후면 재발급 가능(2xx)")
-             */
+            // @DisplayName("request: 정상 → 2xx + 메일로 OTP 발송됨")
+            // @DisplayName("request: verified라도 만료된 후면 재발급 가능(2xx)")
             emailOtpRepository.save(toSave);
         } catch (DataIntegrityViolationException e) {
-            // 누가 먼저 만들었음 → 다시 락 조회해서 정책대로 처리
+            // 레이스로 누가 먼저 생성한 경우: 다시 잠금 조회 후 정책대로 처리/재발급
             EmailOtp existing = emailOtpRepository.findByEmailAndPurposeForUpdate(email, PURPOSE)
                     .orElseThrow(() -> e);
 
-            // existing 기준으로 쿨다운/일일제한 재검사 후 OTP_COOLDOWN 등 던지기
-            LocalDateTime retryAt = existing.getResendAvailableAt();
-            long retry = Duration.between(now, retryAt).getSeconds();
-            throw new ApiException(
-                    ErrorCode.OTP_COOLDOWN,
-                    ErrorCode.OTP_COOLDOWN.defaultMessage(),
-                    (int) Math.max(retry, 1),
-                    null);
+            validateReissuePolicy(existing, now, today);
+
+            reissueAndReturn(existing, codeHash, expiresAt, now, today, resendAvailableAt);
+            emailOtpRepository.save(existing);
         }
 
         /**
-         * 여기서 메일을 직접 보내지 않음.
-         * 트랜잭션 커밋이 끝난 후(AFTER_COMMIT) 리스너가 메일을 보낸다.
+         * 메일은 트랜잭션 커밋 후, SignupMailSender가 처리한다.
+         * - @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
          */
         eventPublisher.publishEvent(new SignupOtpIssuedEvent(email, code));
     }
@@ -121,12 +102,22 @@ public class SignupOtpService {
         String email = normalizeKyonggiEmail(rawEmail);
         LocalDateTime now = LocalDateTime.now(clock);
 
-        // 락 조회: 실패횟수 증가/verified 처리에서 레이스 방지
+        /**
+         * findByEmailAndPurposeForUpdate: PESSIMISTIC_WRITE 락 걸린 상태로 조회
+         * - 비관적 락: 다른 트랜잭션이 같은 행을 수정하지 못하게 막는다. 
+         * - 동시 검증 요청이 실패 횟수 누적을 뚫지 못하게 한다.
+         * 
+         * 영속성 컨텍스트에 올라온 엔티티이므로,
+         * 이후의 상태 변경은 "더티체킹"으로 커밋 시점에 DB에 반영된다.
+         * - verified 처리
+         * - 실패 횟수 증가
+         */
         EmailOtp otpEntity = emailOtpRepository.findByEmailAndPurposeForUpdate(email, PURPOSE)
                 .orElseThrow(() -> new ApiException(ErrorCode.OTP_NOT_FOUND)); // @DisplayName("verify: 요청 이력 없으면 → 400 OTP_NOT_FOUND")
 
+         // 이미 검증 완료면 멱등 성공(실패 횟수 증가 없음)
         if (otpEntity.isVerified()) { // @DisplayName("verify: 이미 verified면 멱등 성공(2xx) + 실패횟수 증가 없음")
-            return; // 멱등
+            return;
         }
 
         if (otpEntity.isExpired(now)) {
@@ -137,17 +128,43 @@ public class SignupOtpService {
             throw new ApiException(ErrorCode.OTP_TOO_MANY_FAILURES); // @DisplayName("verify: 실패횟수 초과(>= maxFailures) → 400 OTP_TOO_MANY_FAILURES")
         }
 
-        // 불일치: 실패 횟수 증가 후 예외 (noRollbackFor로 커밋 보장)
-        if (!otpHasher.matches(incomingCode, otpEntity.getCodeHash())) { // @DisplayName("verify: 코드 불일치 → 400 OTP_INVALID + failedAttempts가 DB에 +1 커밋됨(noRollbackFor 검증)")
-            otpEntity.increaseFailure();     // managed entity 변경 → commit 시 flush로 DB 반영
-            throw new OtpInvalidException(); // 예외 던져도 noRollbackFor라 커밋됨 (정책상 실패 횟수를 반드시 남김)
-        }
 
         /**
-         * 일치: verified_at 마킹 후 저장
-         * JPA의 더티체킹 기능으로, 커밋 시 emailOtpRepository 반영
+         * 불일치 실패: 실패 횟수 +1 후 "OTP_INVALID": (noRollbackFor로 커밋 보장)
+         * - 정책상 실패 횟수를 반드시 남겨야 하므로 예외가 터져도 롤백하지 않는다.
          */
+        if (!otpHasher.matches(incomingCode, otpEntity.getCodeHash())) { // @DisplayName("verify: 코드 불일치 → 400 OTP_INVALID + failedAttempts가 DB에 +1 커밋됨(noRollbackFor 검증)")
+            otpEntity.increaseFailure();    
+            throw new OtpInvalidException(); 
+        }
+
         otpEntity.markVerified(now); // @DisplayName("verify: 정상 → 2xx + verified=true")
+    }
+
+
+    
+    private void validateReissuePolicy(EmailOtp otp, LocalDateTime now, LocalDate today) {
+        // 이미 검증 + 미만료면 재요청 금지
+        if (otp.isVerified() && !otp.isExpired(now)) {
+            throw new ApiException(ErrorCode.OTP_ALREADY_VERIFIED);
+        }
+
+        // 일일 제한: 날짜가 바뀌면 카운트는 0으로 취급
+        int currentCount = otp.getSendCountDate().equals(today) ? otp.getSendCount() : 0;
+        if (currentCount >= props.dailySendLimit()) {
+            throw new ApiException(ErrorCode.OTP_DAILY_LIMIT);
+        }
+
+        // 쿨다운
+        if (otp.getResendAvailableAt().isAfter(now)) {
+            long retry = Duration.between(now, otp.getResendAvailableAt()).getSeconds();
+            throw new ApiException(
+                    ErrorCode.OTP_COOLDOWN,
+                    ErrorCode.OTP_COOLDOWN.defaultMessage(),
+                    (int) Math.max(retry, 1),
+                    null
+            );
+        }
     }
 
     private EmailOtp reissueAndReturn(

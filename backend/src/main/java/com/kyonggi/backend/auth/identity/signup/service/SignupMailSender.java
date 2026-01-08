@@ -13,7 +13,7 @@ import lombok.RequiredArgsConstructor;
  * 
  * @Component
  * - 비즈니스 서비스가 아닌 "외부 I/O 어댑터"
- * - 메일 발송이라는 기술적 관심사만 담당
+ * - 서비스(정책)와 메일 발송이라 기술적 관심사를 분리한다.
  * 
  * @Service가 직접 JavaMailSender를 쓰지 않고 
  *  이 클래스를 거친다 -> 관심사 분리 (SRP) 

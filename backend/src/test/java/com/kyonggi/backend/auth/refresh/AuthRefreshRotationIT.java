@@ -27,7 +27,6 @@ import jakarta.servlet.http.Cookie;
 class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
 
     @Autowired MockMvc mvc;
-    @Autowired TokenHashUtils tokenHashUtils;
     @Autowired AuthProperties authProps;
 
     @BeforeEach
@@ -45,7 +44,7 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
         assertThat(login.refreshRaw()).isNotBlank();
 
         // DB에는 raw가 아니라 hash로 저장되어야 함
-        String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
+        String hash = TokenHashUtils.sha256Hex(login.refreshRaw());
         Optional<RefreshToken> saved = refreshTokenRepository.findByTokenHash(hash);
 
         // 리프레쉬 토큰이 DB에 있어야 함 (NOT REVOKED, rememberMe: false)
@@ -70,7 +69,7 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
         assertThat(login.accessToken()).isNotBlank();
         assertThat(login.refreshRaw()).isNotBlank();
 
-        String hash = tokenHashUtils.sha256Hex(login.refreshRaw());
+        String hash = TokenHashUtils.sha256Hex(login.refreshRaw());
         Optional<RefreshToken> saved = refreshTokenRepository.findByTokenHash(hash);
 
         assertThat(saved).isPresent();
@@ -92,7 +91,7 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
         LoginResult login = AuthFlowSupport.loginOk(mvc, EMAIL, PASSWORD, false);
         String oldRaw = login.refreshRaw();
 
-        String oldHash = tokenHashUtils.sha256Hex(oldRaw);
+        String oldHash = TokenHashUtils.sha256Hex(oldRaw);
         assertThat(refreshTokenRepository.findByTokenHash(oldHash)).isPresent();
 
         // refresh 호출 -> 새 토큰
@@ -110,7 +109,7 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
         assertThat(oldRowAfter.get().getRevokeReason()).isEqualTo(RefreshRevokeReason.ROTATED);
 
         // new는 저장 + revoked=false
-        String newHash = tokenHashUtils.sha256Hex(newRaw);
+        String newHash = TokenHashUtils.sha256Hex(newRaw);
         Optional<RefreshToken> newRow = refreshTokenRepository.findByTokenHash(newHash);
 
         assertThat(newRow).isPresent();
@@ -171,7 +170,7 @@ class AuthRefreshRotationIT extends AbstractAuthIntegrationTest {
                 .isEqualTo(authProps.refresh().rememberMeSeconds());
 
         // DB rememberMe 유지
-        String newHash = tokenHashUtils.sha256Hex(refreshed.refreshRaw());
+        String newHash = TokenHashUtils.sha256Hex(refreshed.refreshRaw());
         Optional<RefreshToken> newRow = refreshTokenRepository.findByTokenHash(newHash);
 
         assertThat(newRow).isPresent();

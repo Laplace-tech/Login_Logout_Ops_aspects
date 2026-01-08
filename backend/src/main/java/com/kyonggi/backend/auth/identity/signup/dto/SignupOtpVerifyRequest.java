@@ -5,8 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 
 /**
- * OTP 검증 요청 DTO
- * - email 형식 + code가 6자리 숫자인지만 1차 검증
+ * 회원가입 OTP 검증 요청
+ * - 이메일 형식 + 코드는 6자리 숫자인지만 1차 검증
  */
 public record SignupOtpVerifyRequest(
         @NotBlank @Email
